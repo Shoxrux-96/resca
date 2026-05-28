@@ -1,0 +1,1354 @@
+openapi: 3.1.0
+info:
+  # Do not change the title, if the title changes, the import paths will be broken
+  title: Api
+  version: 0.1.0
+  description: Restoran va Kafe CRM/POS tizimi API
+servers:
+  - url: /api
+    description: Base API path
+tags:
+  - name: health
+    description: Health operations
+  - name: auth
+    description: Authentication
+  - name: venues
+    description: Kafe va restoranlar
+  - name: products
+    description: Mahsulotlar
+  - name: customers
+    description: Mijozlar
+  - name: orders
+    description: Buyurtmalar va savdo
+  - name: debts
+    description: Qarz daftar
+  - name: rooms
+    description: Xonalar va stollar
+
+paths:
+  /healthz:
+    get:
+      operationId: healthCheck
+      tags: [health]
+      summary: Health check
+      responses:
+        "200":
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+
+  /auth/login:
+    post:
+      operationId: login
+      tags: [auth]
+      summary: Tizimga kirish
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginInput"
+      responses:
+        "200":
+          description: Muvaffaqiyatli kirish
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "401":
+          description: Noto'g'ri ma'lumotlar
+
+  /auth/me:
+    get:
+      operationId: getMe
+      tags: [auth]
+      summary: Joriy foydalanuvchi ma'lumotlari
+      responses:
+        "200":
+          description: Foydalanuvchi ma'lumotlari
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "401":
+          description: Autentifikatsiya talab etiladi
+
+  /auth/logout:
+    post:
+      operationId: logout
+      tags: [auth]
+      summary: Tizimdan chiqish
+      responses:
+        "200":
+          description: Chiqildi
+
+  /venues:
+    get:
+      operationId: listVenues
+      tags: [venues]
+      summary: Barcha kafe/restoranlar ro'yxati
+      responses:
+        "200":
+          description: Kafe/restoranlar ro'yxati
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Venue"
+    post:
+      operationId: createVenue
+      tags: [venues]
+      summary: Yangi kafe/restoran qo'shish (owner)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VenueInput"
+      responses:
+        "201":
+          description: Yaratildi
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Venue"
+
+  /venues/{id}:
+    get:
+      operationId: getVenue
+      tags: [venues]
+      summary: Kafe/restoran ma'lumotlari
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Kafe/restoran
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Venue"
+        "404":
+          description: Topilmadi
+    patch:
+      operationId: updateVenue
+      tags: [venues]
+      summary: Kafe/restoran tahrirlash
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VenueUpdate"
+      responses:
+        "200":
+          description: Yangilandi
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Venue"
+    delete:
+      operationId: deleteVenue
+      tags: [venues]
+      summary: Kafe/restoran o'chirish
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: O'chirildi
+
+  /venues/{id}/assign-admin:
+    post:
+      operationId: assignVenueAdmin
+      tags: [venues]
+      summary: Kafe uchun admin tayinlash
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminAssignInput"
+      responses:
+        "200":
+          description: Admin tayinlandi
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+
+  /venues/{id}/stats:
+    get:
+      operationId: getVenueStats
+      tags: [venues]
+      summary: Kafe statistikasi (bugungi savdo, umumiy qarz)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Statistika
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VenueStats"
+
+  /venues/{venueId}/products:
+    get:
+      operationId: listProducts
+      tags: [products]
+      summary: Kafe mahsulotlari ro'yxati
+      parameters:
+        - name: venueId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Mahsulotlar ro'yxati
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Product"
+    post:
+      operationId: createProduct
+      tags: [products]
+      summary: Yangi mahsulot qo'shish
+      parameters:
+        - name: venueId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductInput"
+      responses:
+        "201":
+          description: Mahsulot yaratildi
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Product"
+
+  /venues/{venueId}/products/{id}:
+    patch:
+      operationId: updateProduct
+      tags: [products]
+      summary: Mahsulotni tahrirlash
+      parameters:
+        - name: venueId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductUpdate"
+      responses:
+        "200":
+          description: Yangilandi
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Product"
+    delete:
+      operationId: deleteProduct
+      tags: [products]
+      summary: Mahsulotni o'chirish
+      parameters:
+        - name: venueId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: O'chirildi
+
+  /venues/{venueId}/customers:
+    get:
+      operationId: listCustomers
+      tags: [customers]
+      summary: Kafe mijozlari ro'yxati
+      parameters:
+        - name: venueId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Mijozlar ro'yxati
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Customer"
+    post:
+      operationId: createCustomer
+      tags: [customers]
+      summary: Yangi mijoz qo'shish
+      parameters:
+        - name: venueId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CustomerInput"
+      responses:
+        "201":
+          description: Mijoz yaratildi
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Customer"
+
+  /venues/{venueId}/customers/{id}:
+    get:
+      operationId: getCustomer
+      tags: [customers]
+      summary: Mijoz ma'lumotlari
+      parameters:
+        - name: venueId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Mijoz
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Customer"
+
+  /venues/{venueId}/orders:
+    get:
+      operationId: listOrders
+      tags: [orders]
+      summary: Kafe buyurtmalari ro'yxati
+      parameters:
+        - name: venueId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Buyurtmalar ro'yxati
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Order"
+    post:
+      operationId: createOrder
+      tags: [orders]
+      summary: Yangi buyurtma (savdo)
+      parameters:
+        - name: venueId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OrderInput"
+      responses:
+        "201":
+          description: Buyurtma yaratildi
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+
+  /venues/{venueId}/orders/{id}:
+    get:
+      operationId: getOrder
+      tags: [orders]
+      summary: Buyurtma tafsilotlari (chek uchun)
+      parameters:
+        - name: venueId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Buyurtma tafsilotlari
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderDetail"
+
+  /venues/{venueId}/debts:
+    get:
+      operationId: listDebts
+      tags: [debts]
+      summary: Qarz daftar ro'yxati
+      parameters:
+        - name: venueId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Qarzlar ro'yxati
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Debt"
+
+  /venues/{venueId}/debts/{id}/pay:
+    patch:
+      operationId: payDebt
+      tags: [debts]
+      summary: Qarzni to'langan deb belgilash
+      parameters:
+        - name: venueId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DebtPayInput"
+      responses:
+        "200":
+          description: Yangilandi
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Debt"
+
+  /venues/{venueId}/summary:
+    get:
+      operationId: getVenueSummary
+      tags: [venues]
+      summary: Dashboard uchun bugungi savdo xulosasi
+      parameters:
+        - name: venueId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Xulosa
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardSummary"
+
+  /venues/{venueId}/report:
+    get:
+      operationId: getVenueReport
+      tags: [venues]
+      summary: Sotuvlar hisoboti (oylik/yillik)
+      parameters:
+        - name: venueId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: year
+          in: query
+          required: false
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Hisobot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SalesReport"
+
+  /owner/summary:
+    get:
+      operationId: getOwnerSummary
+      tags: [venues]
+      summary: Owner dashboard uchun umumiy statistika
+      responses:
+        "200":
+          description: Owner statistikasi
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OwnerSummary"
+
+  /venues/{venueId}/rooms:
+    get:
+      operationId: listRooms
+      tags: [rooms]
+      summary: Xonalar ro'yxati (stollar bilan)
+      parameters:
+        - name: venueId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Xonalar ro'yxati
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Room"
+    post:
+      operationId: createRoom
+      tags: [rooms]
+      summary: Yangi xona yaratish
+      parameters:
+        - name: venueId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RoomInput"
+      responses:
+        "201":
+          description: Yaratildi
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Room"
+
+  /venues/{venueId}/rooms/{id}:
+    patch:
+      operationId: updateRoom
+      tags: [rooms]
+      summary: Xonani tahrirlash
+      parameters:
+        - name: venueId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RoomUpdate"
+      responses:
+        "200":
+          description: Yangilandi
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Room"
+    delete:
+      operationId: deleteRoom
+      tags: [rooms]
+      summary: Xonani o'chirish
+      parameters:
+        - name: venueId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: O'chirildi
+
+  /venues/{venueId}/tables:
+    get:
+      operationId: listTables
+      tags: [rooms]
+      summary: Barcha stollar ro'yxati
+      parameters:
+        - name: venueId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Stollar ro'yxati
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Table"
+    post:
+      operationId: createTable
+      tags: [rooms]
+      summary: Yangi stol yaratish
+      parameters:
+        - name: venueId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TableInput"
+      responses:
+        "201":
+          description: Yaratildi
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Table"
+
+  /venues/{venueId}/tables/{id}:
+    patch:
+      operationId: updateTable
+      tags: [rooms]
+      summary: Stolni tahrirlash
+      parameters:
+        - name: venueId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TableUpdate"
+      responses:
+        "200":
+          description: Yangilandi
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Table"
+    delete:
+      operationId: deleteTable
+      tags: [rooms]
+      summary: Stolni o'chirish
+      parameters:
+        - name: venueId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: O'chirildi
+
+  /users:
+    get:
+      operationId: listUsers
+      tags: [auth]
+      summary: Barcha foydalanuvchilar (owner uchun)
+      responses:
+        "200":
+          description: Foydalanuvchilar
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/User"
+    post:
+      operationId: createUser
+      tags: [auth]
+      summary: Yangi foydalanuvchi yaratish (owner)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserInput"
+      responses:
+        "201":
+          description: Yaratildi
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+
+components:
+  schemas:
+    HealthStatus:
+      type: object
+      properties:
+        status:
+          type: string
+      required:
+        - status
+
+    LoginInput:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+
+    AuthResponse:
+      type: object
+      required: [user, token]
+      properties:
+        user:
+          $ref: "#/components/schemas/User"
+        token:
+          type: string
+
+    User:
+      type: object
+      required: [id, username, role]
+      properties:
+        id:
+          type: integer
+        username:
+          type: string
+        name:
+          type: ["string", "null"]
+        role:
+          type: string
+          enum: [owner, admin]
+        venueId:
+          type: ["integer", "null"]
+        venueName:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+
+    UserInput:
+      type: object
+      required: [username, password, role]
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+        name:
+          type: string
+        role:
+          type: string
+          enum: [owner, admin]
+        venueId:
+          type: ["integer", "null"]
+
+    Venue:
+      type: object
+      required: [id, name, type]
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        type:
+          type: string
+          enum: [cafe, restaurant]
+        address:
+          type: ["string", "null"]
+        phone:
+          type: ["string", "null"]
+        email:
+          type: ["string", "null"]
+        instagram:
+          type: ["string", "null"]
+        telegram:
+          type: ["string", "null"]
+        facebook:
+          type: ["string", "null"]
+        adminId:
+          type: ["integer", "null"]
+        adminName:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+
+    VenueInput:
+      type: object
+      required: [name, type]
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+          enum: [cafe, restaurant]
+        address:
+          type: string
+        phone:
+          type: string
+        email:
+          type: string
+        instagram:
+          type: string
+        telegram:
+          type: string
+        facebook:
+          type: string
+
+    VenueUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+          enum: [cafe, restaurant]
+        address:
+          type: ["string", "null"]
+        phone:
+          type: ["string", "null"]
+        email:
+          type: ["string", "null"]
+        instagram:
+          type: ["string", "null"]
+        telegram:
+          type: ["string", "null"]
+        facebook:
+          type: ["string", "null"]
+
+    AdminAssignInput:
+      type: object
+      required: [userId]
+      properties:
+        userId:
+          type: integer
+
+    VenueStats:
+      type: object
+      required: [todaySales, totalRevenue, totalDebts, productCount, orderCount]
+      properties:
+        todaySales:
+          type: number
+        totalRevenue:
+          type: number
+        totalDebts:
+          type: number
+        productCount:
+          type: integer
+        orderCount:
+          type: integer
+
+    Product:
+      type: object
+      required: [id, venueId, name, price, category]
+      properties:
+        id:
+          type: integer
+        venueId:
+          type: integer
+        name:
+          type: string
+        price:
+          type: number
+        category:
+          type: string
+        description:
+          type: ["string", "null"]
+        imageUrl:
+          type: ["string", "null"]
+        stock:
+          type: ["integer", "null"]
+        isAvailable:
+          type: boolean
+        createdAt:
+          type: string
+
+    ProductInput:
+      type: object
+      required: [name, price, category]
+      properties:
+        name:
+          type: string
+        price:
+          type: number
+        category:
+          type: string
+        description:
+          type: string
+        imageUrl:
+          type: string
+        stock:
+          type: integer
+        isAvailable:
+          type: boolean
+
+    ProductUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+        price:
+          type: number
+        category:
+          type: string
+        description:
+          type: ["string", "null"]
+        imageUrl:
+          type: ["string", "null"]
+        stock:
+          type: ["integer", "null"]
+        isAvailable:
+          type: boolean
+
+    Customer:
+      type: object
+      required: [id, venueId, name]
+      properties:
+        id:
+          type: integer
+        venueId:
+          type: integer
+        name:
+          type: string
+        phone:
+          type: ["string", "null"]
+        totalDebt:
+          type: number
+        createdAt:
+          type: string
+
+    CustomerInput:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        phone:
+          type: string
+
+    OrderItem:
+      type: object
+      required: [productId, productName, quantity, unitPrice, total]
+      properties:
+        productId:
+          type: integer
+        productName:
+          type: string
+        quantity:
+          type: integer
+        unitPrice:
+          type: number
+        total:
+          type: number
+
+    OrderItemInput:
+      type: object
+      required: [productId, quantity]
+      properties:
+        productId:
+          type: integer
+        quantity:
+          type: integer
+
+    PaymentSplit:
+      type: object
+      properties:
+        cash:
+          type: number
+        card:
+          type: number
+        transfer:
+          type: number
+        debt:
+          type: number
+
+    Order:
+      type: object
+      required: [id, venueId, totalAmount, paymentType, status, createdAt]
+      properties:
+        id:
+          type: integer
+        venueId:
+          type: integer
+        customerId:
+          type: ["integer", "null"]
+        customerName:
+          type: ["string", "null"]
+        totalAmount:
+          type: number
+        paymentType:
+          type: string
+          enum: [cash, card, transfer, debt]
+        paymentSplit:
+          $ref: "#/components/schemas/PaymentSplit"
+        status:
+          type: string
+          enum: [completed, debt, cancelled]
+        notes:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+
+    OrderDetail:
+      type: object
+      required: [id, venueId, totalAmount, paymentType, status, items, createdAt]
+      properties:
+        id:
+          type: integer
+        venueId:
+          type: integer
+        customerId:
+          type: ["integer", "null"]
+        customerName:
+          type: ["string", "null"]
+        totalAmount:
+          type: number
+        paymentType:
+          type: string
+          enum: [cash, card, transfer, debt]
+        paymentSplit:
+          $ref: "#/components/schemas/PaymentSplit"
+        status:
+          type: string
+          enum: [completed, debt, cancelled]
+        notes:
+          type: ["string", "null"]
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/OrderItem"
+        createdAt:
+          type: string
+
+    OrderInput:
+      type: object
+      required: [items, paymentType]
+      properties:
+        customerId:
+          type: ["integer", "null"]
+        roomId:
+          type: ["integer", "null"]
+        tableId:
+          type: ["integer", "null"]
+        tableNumber:
+          type: ["integer", "null"]
+        roomName:
+          type: ["string", "null"]
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/OrderItemInput"
+        paymentType:
+          type: string
+          enum: [cash, card, transfer, debt]
+        paymentSplit:
+          $ref: "#/components/schemas/PaymentSplit"
+        notes:
+          type: string
+
+    Room:
+      type: object
+      required: [id, venueId, name, isActive, createdAt]
+      properties:
+        id:
+          type: integer
+        venueId:
+          type: integer
+        name:
+          type: string
+        description:
+          type: ["string", "null"]
+        isActive:
+          type: boolean
+        createdAt:
+          type: string
+        tables:
+          type: array
+          items:
+            $ref: "#/components/schemas/Table"
+
+    RoomInput:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+
+    RoomUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: ["string", "null"]
+        isActive:
+          type: boolean
+
+    Table:
+      type: object
+      required: [id, venueId, number, isActive, createdAt]
+      properties:
+        id:
+          type: integer
+        venueId:
+          type: integer
+        roomId:
+          type: ["integer", "null"]
+        number:
+          type: integer
+        name:
+          type: ["string", "null"]
+        capacity:
+          type: ["integer", "null"]
+        isActive:
+          type: boolean
+        createdAt:
+          type: string
+
+    TableInput:
+      type: object
+      required: [number]
+      properties:
+        roomId:
+          type: ["integer", "null"]
+        number:
+          type: integer
+        name:
+          type: string
+        capacity:
+          type: integer
+
+    TableUpdate:
+      type: object
+      properties:
+        roomId:
+          type: ["integer", "null"]
+        number:
+          type: integer
+        name:
+          type: ["string", "null"]
+        capacity:
+          type: integer
+        isActive:
+          type: boolean
+
+    Debt:
+      type: object
+      required: [id, venueId, customerId, customerName, orderId, amount, status, createdAt]
+      properties:
+        id:
+          type: integer
+        venueId:
+          type: integer
+        customerId:
+          type: integer
+        customerName:
+          type: string
+        customerPhone:
+          type: ["string", "null"]
+        orderId:
+          type: integer
+        amount:
+          type: number
+        paidAmount:
+          type: number
+        remaining:
+          type: number
+        status:
+          type: string
+          enum: [unpaid, paid, partial]
+        paidAt:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+
+    DebtPayInput:
+      type: object
+      required: [amount]
+      properties:
+        amount:
+          type: number
+
+    SalesReport:
+      type: object
+      required: [year, monthlySales, allOrders, totalRevenue, totalOrders]
+      properties:
+        year:
+          type: integer
+        totalRevenue:
+          type: number
+        totalOrders:
+          type: integer
+        monthlySales:
+          type: array
+          items:
+            type: object
+            required: [month, revenue, orderCount]
+            properties:
+              month:
+                type: integer
+              monthName:
+                type: string
+              revenue:
+                type: number
+              orderCount:
+                type: integer
+        allOrders:
+          type: array
+          items:
+            $ref: "#/components/schemas/OrderDetail"
+
+    DashboardSummary:
+      type: object
+      required: [todayRevenue, todayOrderCount, totalDebt, unpaidDebtCount, topProducts, recentOrders]
+      properties:
+        todayRevenue:
+          type: number
+        todayOrderCount:
+          type: integer
+        totalDebt:
+          type: number
+        unpaidDebtCount:
+          type: integer
+        topProducts:
+          type: array
+          items:
+            $ref: "#/components/schemas/TopProduct"
+        recentOrders:
+          type: array
+          items:
+            $ref: "#/components/schemas/Order"
+
+    TopProduct:
+      type: object
+      required: [productId, productName, totalSold, revenue]
+      properties:
+        productId:
+          type: integer
+        productName:
+          type: string
+        totalSold:
+          type: integer
+        revenue:
+          type: number
+
+    OwnerSummary:
+      type: object
+      required: [totalVenues, totalRevenue, totalDebt, venueStats]
+      properties:
+        totalVenues:
+          type: integer
+        totalRevenue:
+          type: number
+        totalDebt:
+          type: number
+        venueStats:
+          type: array
+          items:
+            $ref: "#/components/schemas/VenueStat"
+
+    VenueStat:
+      type: object
+      required: [venueId, venueName, todayRevenue, totalDebt]
+      properties:
+        venueId:
+          type: integer
+        venueName:
+          type: string
+        todayRevenue:
+          type: number
+        totalDebt:
+          type: number
+        orderCount:
+          type: integer

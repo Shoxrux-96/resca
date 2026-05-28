@@ -1,0 +1,8 @@
+User-agent: *
+Allow: /
+Disallow: /admin/
+Disallow: /owner/
+Disallow: /waiter/
+Disallow: /api/
+
+Sitemap: https://resca.uz/sitemap.xml
