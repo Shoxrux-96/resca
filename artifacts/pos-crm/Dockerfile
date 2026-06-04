@@ -1,12 +1,12 @@
-FROM node:20-alpine AS build
+FROM node:22-alpine AS build
 
 WORKDIR /repo
 
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml /repo/
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json /repo/
 COPY lib /repo/lib
 COPY artifacts/pos-crm /repo/artifacts/pos-crm
 
-RUN corepack enable && pnpm -C /repo/artifacts/pos-crm install --frozen-lockfile
+RUN corepack enable && pnpm -C /repo/artifacts/pos-crm install
 
 ENV NODE_ENV=production
 ENV PORT=3000

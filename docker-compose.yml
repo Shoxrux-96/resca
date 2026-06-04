@@ -6,7 +6,7 @@ services:
       POSTGRES_PASSWORD: restopass
       POSTGRES_DB: restocrm
     ports:
-      - "5432:5432"
+      - "5434:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     restart: unless-stopped
@@ -25,7 +25,7 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://restouser:restopass@db:5432/restocrm
     ports:
-      - "8000:8000"
+      - "8001:8000"
     depends_on:
       db:
         condition: service_healthy
@@ -39,7 +39,7 @@ services:
       BASE_PATH: "/"
       PORT: "3000"
     ports:
-      - "3000:80"
+      - "3002:80"
     depends_on:
       - backend
     restart: unless-stopped

@@ -21,12 +21,7 @@ export function combineDateAndTime(date: string, time: string): string {
 
 /** Ko‘rsatish: 28.05.2026, 14:30 (24 soat, AM/PM yo‘q) */
 export function formatDateTime24(iso: string): string {
-  return new Date(iso).toLocaleString("uz-UZ", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  });
+  const d = new Date(iso);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${p(d.getDate())}.${p(d.getMonth() + 1)}.${d.getFullYear()}, ${p(d.getHours())}:${p(d.getMinutes())}`;
 }

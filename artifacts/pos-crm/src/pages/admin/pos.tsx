@@ -573,6 +573,7 @@ export default function AdminPos() {
   const { toast } = useToast();
 
   const [search, setSearch] = useState("");
+  const [activeCategory, setActiveCategory] = useState<string>("Barchasi");
   const [cart, setCart] = useState<CartItem[]>([]);
   const [activeOpenOrderId, setActiveOpenOrderId] = useState<number | null>(null);
   const [showDebtPanel, setShowDebtPanel] = useState(false);
@@ -586,9 +587,24 @@ export default function AdminPos() {
   const availableProducts = (products ?? []).filter((p) => p.isAvailable);
   const suggestions = search.length > 0 ? availableProducts.filter((p) => p.name.toLowerCase().includes(search.toLowerCase())).slice(0, 8) : [];
 
+  const categories = useMemo(() => {
+    const cats = Array.from(new Set(availableProducts.filter((p) => p.category).map((p) => p.category!)));
+    return ["Barchasi", ...cats];
+  }, [availableProducts]);
+
+  const filteredProducts = useMemo(() =>
+    availableProducts.filter((p) => {
+      const matchCat = activeCategory === "Barchasi" || p.category === activeCategory;
+      const matchSearch = !search.trim() || p.name.toLowerCase().includes(search.toLowerCase());
+      return matchCat && matchSearch;
+    }),
+    [availableProducts, activeCategory, search]
+  );
+
   const subtotal = cart.reduce((s, i) => s + i.product.price * i.quantity, 0);
   const totalDiscount = cart.reduce((s, i) => s + (i.product.price * i.quantity * i.discount) / 100, 0);
   const total = subtotal - totalDiscount;
+  const cartCount = cart.reduce((s, i) => s + i.quantity, 0);
 
   /* Load open order items into cart */
   const loadOpenOrder = (order: ActiveOrder) => {
@@ -885,75 +901,144 @@ export default function AdminPos() {
             )}
           </div>
 
-          {/* Cart items */}
-          <div className="flex-1 overflow-y-auto p-4" onClick={() => setShowSuggestions(false)}>
-            {cart.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
-                <ShoppingBag className="h-16 w-16 mb-3 opacity-30" />
-                <p className="text-lg">Savat bo'sh</p>
-                <p className="text-sm mt-1 text-muted-foreground">Mahsulot qidiring va qo'shing</p>
+          {/* Category tabs + Product grid + Cart */}
+          <div className="flex-1 overflow-y-auto" onClick={() => setShowSuggestions(false)}>
+            {/* Category tabs */}
+            {categories.length > 1 && (
+              <div className="flex gap-2 px-4 pt-3 pb-2 overflow-x-auto shrink-0 scrollbar-none">
+                {categories.map((cat) => (
+                  <button
+                    key={cat}
+                    onClick={() => { setActiveCategory(cat); setSearch(""); }}
+                    className={`shrink-0 px-3.5 py-1.5 rounded-full text-xs font-medium transition-all active:scale-95 ${
+                      activeCategory === cat
+                        ? "bg-blue-600 text-white shadow-sm"
+                        : "bg-card border border-border text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    {cat}
+                  </button>
+                ))}
               </div>
-            ) : (
-              <div className="space-y-2">
-                {cart.map((item, idx) => {
-                  const lineTotal = itemTotal(item);
-                  return (
-                    <div key={item.product.id} className="bg-card border border-border rounded-xl p-3">
-                      <div className="flex items-start justify-between mb-2">
-                        <div className="flex items-start gap-2">
-                          {(item.product as any).imageUrl ? (
-                            <img src={(item.product as any).imageUrl} alt="" className="w-9 h-9 rounded-lg object-cover shrink-0 mt-0.5" />
-                          ) : (
-                            <div className="w-9 h-9 rounded-lg bg-zinc-300 dark:bg-zinc-800 flex items-center justify-center shrink-0 mt-0.5">
-                              <span className="text-lg opacity-40">🍽️</span>
+            )}
+
+            {/* Product grid */}
+            <div className="px-4 pb-3">
+              {filteredProducts.length === 0 && search.length > 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-6">"<b>{search}</b>" bo'yicha mahsulot topilmadi</p>
+              ) : filteredProducts.length > 0 ? (
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+                  {filteredProducts.map((product) => {
+                    const inCart = cart.find((i) => i.product.id === product.id);
+                    return (
+                      <button
+                        key={product.id}
+                        onClick={() => addProduct(product)}
+                        className={`relative flex flex-col items-start p-2.5 rounded-xl border text-left transition-all active:scale-[0.97] ${
+                          inCart
+                            ? "border-blue-500/50 bg-blue-600/10"
+                            : "border-border bg-card hover:border-border/80 hover:bg-accent/50"
+                        }`}
+                      >
+                        {inCart && (
+                          <span className="absolute top-2 right-2 w-5 h-5 bg-blue-600 text-white text-[10px] font-bold rounded-full flex items-center justify-center leading-none z-10">
+                            {inCart.quantity}
+                          </span>
+                        )}
+                        {(product as any).imageUrl ? (
+                          <img
+                            src={(product as any).imageUrl}
+                            alt={product.name}
+                            className="w-full aspect-square object-cover rounded-lg mb-2"
+                          />
+                        ) : (
+                          <div className="w-full aspect-square rounded-lg bg-zinc-300 dark:bg-zinc-800 flex items-center justify-center mb-2">
+                            <span className="text-2xl opacity-40">🍽️</span>
+                          </div>
+                        )}
+                        <p className="text-sm font-semibold text-foreground leading-tight line-clamp-2">{product.name}</p>
+                        {product.category && (
+                          <p className="text-xs text-muted-foreground mt-0.5">{product.category}</p>
+                        )}
+                        <p className="text-sm font-bold text-blue-400 mt-1">{fmt(product.price)} so'm</p>
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : null}
+            </div>
+
+            {/* Cart items */}
+            {cart.length > 0 && (
+              <div className="px-4 pb-4 border-t border-border pt-3">
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="text-sm font-semibold text-foreground flex items-center gap-1.5">
+                    <ShoppingBag className="h-4 w-4" />
+                    Savat ({cartCount} ta)
+                  </h3>
+                  <button onClick={clearCart} className="text-xs text-red-400 hover:text-red-300">Tozalash</button>
+                </div>
+                <div className="space-y-2">
+                  {cart.map((item, idx) => {
+                    const lineTotal = itemTotal(item);
+                    return (
+                      <div key={item.product.id} className="bg-card border border-border rounded-xl p-3">
+                        <div className="flex items-start justify-between mb-2">
+                          <div className="flex items-start gap-2">
+                            {(item.product as any).imageUrl ? (
+                              <img src={(item.product as any).imageUrl} alt="" className="w-9 h-9 rounded-lg object-cover shrink-0 mt-0.5" />
+                            ) : (
+                              <div className="w-9 h-9 rounded-lg bg-zinc-300 dark:bg-zinc-800 flex items-center justify-center shrink-0 mt-0.5">
+                                <span className="text-lg opacity-40">🍽️</span>
+                              </div>
+                            )}
+                            <div>
+                              <span className="text-xs text-muted-foreground mr-1">{idx + 1}.</span>
+                              <span className="text-foreground font-semibold text-sm">{item.product.name}</span>
+                              <span className="text-xs text-muted-foreground ml-2">{item.product.category}</span>
                             </div>
-                          )}
-                          <div>
-                            <span className="text-xs text-muted-foreground mr-1">{idx + 1}.</span>
-                            <span className="text-foreground font-semibold text-sm">{item.product.name}</span>
-                            <span className="text-xs text-muted-foreground ml-2">{item.product.category}</span>
+                          </div>
+                          <button onClick={() => removeItem(item.product.id)} className="text-red-500 hover:bg-red-500/10 rounded p-1 ml-2">
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <div className="flex items-center bg-muted rounded-lg overflow-hidden">
+                            <button
+                              onClick={() => updateItem(item.product.id, { quantity: Math.max(1, item.quantity - 1) })}
+                              className="px-2 py-1.5 text-foreground hover:bg-zinc-300 dark:hover:bg-zinc-700"
+                            >
+                              <Minus className="h-3.5 w-3.5" />
+                            </button>
+                            <input type="number" value={item.quantity} onChange={(e) => updateItem(item.product.id, { quantity: Math.max(1, parseInt(e.target.value) || 1) })} className="w-10 text-center bg-transparent text-foreground text-sm font-semibold focus:outline-none" />
+                            <button
+                              onClick={() => updateItem(item.product.id, { quantity: item.quantity + 1 })}
+                              className="px-2 py-1.5 text-foreground hover:bg-zinc-300 dark:hover:bg-zinc-700"
+                            >
+                              <Plus className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                          <select
+                            value={item.unit}
+                            onChange={(e) => updateItem(item.product.id, { unit: e.target.value as Unit })}
+                            className="bg-input border border-border text-foreground text-sm rounded-lg px-2 py-1.5 focus:outline-none"
+                          >
+                            {UNITS.map((u) => <option key={u.value} value={u.value}>{u.label}</option>)}
+                          </select>
+                          <div className="flex items-center gap-1 bg-muted rounded-lg px-2 py-1.5">
+                            <Percent className="h-3.5 w-3.5 text-muted-foreground" />
+                            <input type="number" value={item.discount} min={0} max={100} onChange={(e) => updateItem(item.product.id, { discount: Math.min(100, Math.max(0, parseInt(e.target.value) || 0)) })} className="w-10 text-center bg-transparent text-foreground text-sm focus:outline-none" placeholder="0" />
+                            <span className="text-muted-foreground text-xs">chegirma</span>
+                          </div>
+                          <div className="ml-auto text-right">
+                            {item.discount > 0 && <p className="text-xs text-muted-foreground line-through">{fmt(item.product.price * item.quantity)} so'm</p>}
+                            <p className="text-foreground font-bold">{fmt(lineTotal)} so'm</p>
                           </div>
                         </div>
-                        <button onClick={() => removeItem(item.product.id)} className="text-red-500 hover:bg-red-500/10 rounded p-1 ml-2">
-                          <Trash2 className="h-4 w-4" />
-                        </button>
                       </div>
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <div className="flex items-center bg-muted rounded-lg overflow-hidden">
-                          <button
-                            onClick={() => updateItem(item.product.id, { quantity: Math.max(1, item.quantity - 1) })}
-                            className="px-2 py-1.5 text-foreground hover:bg-zinc-300 dark:hover:bg-zinc-700"
-                          >
-                            <Minus className="h-3.5 w-3.5" />
-                          </button>
-                          <input type="number" value={item.quantity} onChange={(e) => updateItem(item.product.id, { quantity: Math.max(1, parseInt(e.target.value) || 1) })} className="w-10 text-center bg-transparent text-foreground text-sm font-semibold focus:outline-none" />
-                          <button
-                            onClick={() => updateItem(item.product.id, { quantity: item.quantity + 1 })}
-                            className="px-2 py-1.5 text-foreground hover:bg-zinc-300 dark:hover:bg-zinc-700"
-                          >
-                            <Plus className="h-3.5 w-3.5" />
-                          </button>
-                        </div>
-                        <select
-                          value={item.unit}
-                          onChange={(e) => updateItem(item.product.id, { unit: e.target.value as Unit })}
-                          className="bg-input border border-border text-foreground text-sm rounded-lg px-2 py-1.5 focus:outline-none"
-                        >
-                          {UNITS.map((u) => <option key={u.value} value={u.value}>{u.label}</option>)}
-                        </select>
-                        <div className="flex items-center gap-1 bg-muted rounded-lg px-2 py-1.5">
-                          <Percent className="h-3.5 w-3.5 text-muted-foreground" />
-                          <input type="number" value={item.discount} min={0} max={100} onChange={(e) => updateItem(item.product.id, { discount: Math.min(100, Math.max(0, parseInt(e.target.value) || 0)) })} className="w-10 text-center bg-transparent text-foreground text-sm focus:outline-none" placeholder="0" />
-                          <span className="text-muted-foreground text-xs">chegirma</span>
-                        </div>
-                        <div className="ml-auto text-right">
-                          {item.discount > 0 && <p className="text-xs text-muted-foreground line-through">{fmt(item.product.price * item.quantity)} so'm</p>}
-                          <p className="text-foreground font-bold">{fmt(lineTotal)} so'm</p>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
+                    );
+                  })}
+                </div>
               </div>
             )}
           </div>

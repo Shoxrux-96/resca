@@ -20,6 +20,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -64,6 +65,37 @@ function fmt(n: number) {
 /* ── Helpers ──────────────────────────────────────────────── */
 const emptyRoomForm = { name: "", description: "" };
 const emptyTableForm = { number: "", name: "", capacity: "4", roomId: "" };
+
+/* ── 24h Time Select (no AM/PM) ─────────────────────────── */
+function TimeSelect({ value, onChange, label }: { value: string; onChange: (v: string) => void; label?: string }) {
+  const [h, m] = value ? value.split(":").map(Number) : [0, 0];
+  return (
+    <div>
+      {label && <Label className="text-muted-foreground text-sm mb-1.5 block">{label}</Label>}
+      <div className="flex gap-1 items-center">
+        <select
+          value={h}
+          onChange={(e) => onChange(`${String(Number(e.target.value)).padStart(2, "0")}:${String(m).padStart(2, "0")}`)}
+          className="flex-1 bg-input border border-border text-foreground rounded-lg px-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600/50"
+        >
+          {Array.from({ length: 24 }, (_, i) => (
+            <option key={i} value={i}>{String(i).padStart(2, "0")}</option>
+          ))}
+        </select>
+        <span className="text-muted-foreground font-bold">:</span>
+        <select
+          value={m}
+          onChange={(e) => onChange(`${String(h).padStart(2, "0")}:${String(Number(e.target.value)).padStart(2, "0")}`)}
+          className="flex-1 bg-input border border-border text-foreground rounded-lg px-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600/50"
+        >
+          {Array.from({ length: 60 }, (_, i) => (
+            <option key={i} value={i}>{String(i).padStart(2, "0")}</option>
+          ))}
+        </select>
+      </div>
+    </div>
+  );
+}
 
 /* ── Main Page ────────────────────────────────────────────── */
 export default function AdminRooms() {
@@ -863,18 +895,12 @@ export default function AdminRooms() {
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <Label>Sana *</Label>
+                <Label className="text-muted-foreground text-sm">Sana *</Label>
                 <Input type="date" value={bookingDate} onChange={(e) => setBookingDate(e.target.value)} className="mt-1.5 bg-input border-border text-foreground" />
               </div>
-              <div>
-                <Label>Boshlanish vaqti (24 soat) *</Label>
-                <Input type="time" value={bookingStartTime} onChange={(e) => setBookingStartTime(e.target.value)} className="mt-1.5 bg-input border-border text-foreground" />
-              </div>
+              <TimeSelect value={bookingStartTime} onChange={setBookingStartTime} label="Boshlanish vaqti *" />
             </div>
-            <div>
-              <Label>Tugash vaqti (24 soat) *</Label>
-              <Input type="time" value={bookingEndTime} onChange={(e) => setBookingEndTime(e.target.value)} className="mt-1.5 bg-input border-border text-foreground" />
-            </div>
+            <TimeSelect value={bookingEndTime} onChange={setBookingEndTime} label="Tugash vaqti *" />
             <div>
               <Label>Izoh</Label>
               <Input value={bookingNotes} onChange={(e) => setBookingNotes(e.target.value)} className="mt-1.5 bg-input border-border text-foreground" />

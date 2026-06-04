@@ -181,14 +181,14 @@ export default function WaiterTables() {
         </div>
         <span className="flex items-center gap-1 text-xs text-muted-foreground/70 ml-auto">
           <Clock className="h-3 w-3" />
-          {lastRefresh.toLocaleTimeString("uz-UZ", { hour: "2-digit", minute: "2-digit" })}
+          {`${String(lastRefresh.getHours()).padStart(2, "0")}:${String(lastRefresh.getMinutes()).padStart(2, "0")}`}
         </span>
       </div>
 
       {/* Last refresh (desktop) */}
       <p className="hidden sm:flex text-xs text-muted-foreground items-center gap-1">
         <Clock className="h-3 w-3" />
-        Oxirgi yangilanish: {lastRefresh.toLocaleTimeString("uz-UZ")}
+        Oxirgi yangilanish: {`${String(lastRefresh.getHours()).padStart(2, "0")}:${String(lastRefresh.getMinutes()).padStart(2, "0")}`}
       </p>
 
       {!rooms || !tables ? (
