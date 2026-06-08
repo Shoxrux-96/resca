@@ -92,6 +92,10 @@ export default function OwnerVenueDetail() {
         onSuccess: () => {
           qc.invalidateQueries({ queryKey: getGetVenueQueryKey(id) });
           toast({ title: "Aloqa ma'lumotlari saqlandi" });
+          // Bot token saqlangach, avtomatik webhook o'rnatish
+          if (contactForm.telegramBotToken) {
+            setupWebhook();
+          }
         },
         onError: () => toast({ title: "Xatolik", variant: "destructive" }),
       }

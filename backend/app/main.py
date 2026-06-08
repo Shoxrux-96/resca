@@ -3616,15 +3616,15 @@ async def setup_telegram_webhook(
     if not venue or not venue.telegram_bot_token:
         raise HTTPException(status_code=400, detail="Bot token sozlanmagan")
 
-    # Saytning public URL'i (deploy paytida sozlanishi kerak)
-    base = settings.CORS_ORIGINS.split(",")[0].strip()
+    # Public URL (deploy paytida .env'da PUBLIC_URL sozlanadi)
+    base = settings.PUBLIC_URL.rstrip("/")
     if base == "*" or not base.startswith("http"):
-        # Lokal test uchun — ngrok yoki deploy URL kerak
         raise HTTPException(
             status_code=400,
-            detail="Backend public URL aniqlanmadi. .env'da CORS_ORIGINS ni HTTPS URL'ga sozlang (masalan: https://yoursite.uz)",
+            detail="Public URL aniqlanmadi. .env'da PUBLIC_URL ni HTTPS URL'ga sozlang (masalan: https://resca.uz)",
         )
-    webhook_url = f"{base.rstrip('/')}/api/telegram/webhook/{venue_id}"
+
+    webhook_url = f"{base}/api/telegram/webhook/{venue_id}"
 
     result = _tg_send(venue.telegram_bot_token, "setWebhook", {
         "url": webhook_url,

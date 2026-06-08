@@ -12,6 +12,11 @@ class Settings(BaseSettings):
     JWT_EXPIRES_MINUTES: int = 60 * 24 * 7
     CORS_ORIGINS: str = "*"
 
+    # Telegram bot webhook uchun public URL (masalan: https://resca.uz)
+    # Telegram webhook public HTTPS URL talab qiladi.
+    # Local test uchun ngrok yoki tunnel ishlating.
+    PUBLIC_URL: str = "http://localhost:8000"
+
     # Web Push (VAPID)
     VAPID_PRIVATE_KEY: str = ""
     VAPID_PUBLIC_KEY: str = ""
