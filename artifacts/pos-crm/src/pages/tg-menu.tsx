@@ -42,6 +42,9 @@ type Order = {
   id: number;
   customerName: string;
   customerPhone: string | null;
+  customerAddress: string | null;
+  telegramUserId: string | null;
+  telegramUsername: string | null;
   status: string;
   totalAmount: number;
   items: OrderItem[];
@@ -329,6 +332,13 @@ export default function TelegramMenu() {
       setCart([]);
       setSubmitOpen(false);
       setTab("menu");
+      // Buyurtma tarixini yangilash
+      if (tgUserId && venueId) {
+        fetch(`/api/public/online-orders/${venueId}/history?telegram_user_id=${encodeURIComponent(tgUserId)}`)
+          .then((r) => r.ok ? r.json() : [])
+          .then(setOrders)
+          .catch(() => {});
+      }
       if (tg?.HapticFeedback) tg.HapticFeedback.notificationOccurred("success");
     } catch (e: any) {
       alert(e.message || "Xatolik");
@@ -524,11 +534,14 @@ export default function TelegramMenu() {
                   <div className="px-4 py-3 border-b border-zinc-200 dark:border-zinc-800 flex items-center justify-between">
                     <div>
                       <p className="text-sm font-bold text-zinc-900 dark:text-zinc-100">#{o.id}</p>
-                      <p className="text-xs text-zinc-500">{new Date(o.createdAt).toLocaleString("uz-UZ", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })}</p>
+                      <p className="text-[11px] text-zinc-500">{new Date(o.createdAt).toLocaleString("uz-UZ", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })}</p>
                     </div>
-                    <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${STATUS_COLORS[o.status] || "text-zinc-600 bg-zinc-100"}`}>
-                      {STATUS_LABELS[o.status] || o.status}
-                    </span>
+                    <div className="text-right">
+                      <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${STATUS_COLORS[o.status] || "text-zinc-600 bg-zinc-100"}`}>
+                        {STATUS_LABELS[o.status] || o.status}
+                      </span>
+                      <p className="text-[10px] text-zinc-400 mt-1">{o.deliveryType === "delivery" ? "Yetkazib berish" : "Olib ketish"}</p>
+                    </div>
                   </div>
                   <div className="px-4 py-2 space-y-1.5">
                     {o.items.map((it, i) => (
@@ -540,9 +553,16 @@ export default function TelegramMenu() {
                       </div>
                     ))}
                   </div>
+                  {o.customerAddress && (
+                    <div className="px-4 py-2 border-t border-zinc-200 dark:border-zinc-800">
+                      <p className="text-[11px] text-zinc-500 flex items-center gap-1">
+                        <MapPin className="h-3 w-3" /> {o.customerAddress}
+                      </p>
+                    </div>
+                  )}
                   <div className="px-4 py-2.5 border-t border-zinc-200 dark:border-zinc-800 flex items-center justify-between">
-                    <span className="text-xs text-zinc-500">{o.deliveryType === "delivery" ? "Yetkazib berish" : "Olib ketish"}</span>
-                    <span className="text-sm font-bold text-blue-600 dark:text-blue-400">Jami: {fmt(o.totalAmount)} so'm</span>
+                    <span className="text-xs text-zinc-500">Jami</span>
+                    <span className="text-sm font-bold text-blue-600 dark:text-blue-400">{fmt(o.totalAmount)} so'm</span>
                   </div>
                 </div>
               ))}
