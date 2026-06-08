@@ -123,6 +123,7 @@ export default function OwnerVenueDetail() {
       } else {
         toast({ title: "Xatolik", description: msg, variant: "destructive" });
       }
+    }
   };
 
   if (isLoading) return <div className="text-muted-foreground">Yuklanmoqda...</div>;
