@@ -3586,9 +3586,7 @@ def _send_main_menu(bot_token: str, chat_id: int, venue: models.Venue, lang: str
         contact_btn = "📞 Контакты"
         lang_btn = "🌐 Сменить язык"
 
-    base_url = settings.CORS_ORIGINS.split(",")[0].strip()
-    if base_url == "*" or not base_url.startswith("http"):
-        base_url = "https://yoursite.uz"
+    base_url = settings.PUBLIC_URL
     webapp_url = f"{base_url}/tg-menu/{venue.id}"
 
     _tg_send(bot_token, "sendMessage", {
