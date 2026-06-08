@@ -4,9 +4,12 @@ import { useAuth } from "@/hooks/use-auth";
 import { useLogout } from "@workspace/api-client-react";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { NotificationsBell } from "@/components/notifications-bell";
 import {
   LayoutDashboard, Store, Users, MonitorSmartphone, Package,
   Receipt, LogOut, DoorOpen, BarChart3, Table2, Menu, X,
+  ChefHat, Truck, Flame, Wallet, Warehouse, Settings2,
+  TrendingDown, TrendingUp, UtensilsCrossed, Globe,
 } from "lucide-react";
 
 export function Layout({ children }: { children: React.ReactNode }) {
@@ -25,6 +28,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
       owner: "Egasi paneli",
       admin: "Admin paneli",
       waiter: "Ofitsiant paneli",
+      kassir: "Kassir paneli",
+      oshpaz: "Oshpaz paneli",
+      mangalchi: "Mangalchi paneli",
+      dastavkachi: "Dastavkachi paneli",
     };
     document.title = `${roleLabel[path] ?? "Panel"} — resca.uz`;
   }, [location]);
@@ -47,12 +54,17 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
   const adminLinks = [
     { href: "/admin/dashboard", label: "Boshqaruv", icon: LayoutDashboard },
-    { href: "/admin/pos", label: "POS Terminal", icon: MonitorSmartphone },
-    { href: "/admin/products", label: "Mahsulotlar", icon: Package },
+    { href: "/admin/pos", label: "Kassa POS", icon: MonitorSmartphone },
+    { href: "/admin/online-orders", label: "Onlayn buyurtmalar", icon: Globe },
+    { href: "/admin/products", label: "Taomlar", icon: UtensilsCrossed },
+    { href: "/admin/inventory", label: "Omborxona", icon: Warehouse },
     { href: "/admin/rooms", label: "Xonalar & Stollar", icon: DoorOpen },
-    { href: "/admin/waiters", label: "Afitsiantlar", icon: Users },
     { href: "/admin/debts", label: "Qarz Daftar", icon: Receipt },
+    { href: "/admin/expenses", label: "Xarajatlar", icon: TrendingDown },
+    { href: "/admin/revenue", label: "Daromad & Foyda", icon: TrendingUp },
     { href: "/admin/report", label: "Sotuvlar Hisobot", icon: BarChart3 },
+    { href: "/admin/staff", label: "Hodimlar", icon: Users },
+    { href: "/admin/settings", label: "Funksiyalar", icon: Settings2 },
   ];
 
   const waiterLinks = [
@@ -60,14 +72,45 @@ export function Layout({ children }: { children: React.ReactNode }) {
     { href: "/waiter/bookings", label: "Bronlar", icon: Receipt },
   ];
 
+  const kassirLinks = [
+    { href: "/kassir/dashboard", label: "Kassa", icon: Wallet },
+    { href: "/kassir/pos", label: "POS Terminal", icon: MonitorSmartphone },
+    { href: "/kassir/online-orders", label: "Onlayn buyurtmalar", icon: Globe },
+    { href: "/kassir/debts", label: "Qarz Daftar", icon: Receipt },
+    { href: "/kassir/report", label: "Hisobot", icon: BarChart3 },
+  ];
+
+  const oshpazLinks = [
+    { href: "/oshpaz/orders", label: "Buyurtmalar", icon: ChefHat },
+    { href: "/oshpaz/online-orders", label: "Onlayn buyurtmalar", icon: Globe },
+  ];
+
+  const mangalchiLinks = [
+    { href: "/mangalchi/orders", label: "Buyurtmalar", icon: Flame },
+    { href: "/mangalchi/online-orders", label: "Onlayn buyurtmalar", icon: Globe },
+  ];
+
+  const dastavkachiLinks = [
+    { href: "/dastavkachi/orders", label: "Yetkazish", icon: Truck },
+    { href: "/dastavkachi/online-orders", label: "Onlayn buyurtmalar", icon: Globe },
+  ];
+
   const links =
     userRole === "owner" ? ownerLinks :
     userRole === "waiter" ? waiterLinks :
+    userRole === "kassir" ? kassirLinks :
+    userRole === "oshpaz" ? oshpazLinks :
+    userRole === "mangalchi" ? mangalchiLinks :
+    userRole === "dastavkachi" ? dastavkachiLinks :
     adminLinks;
 
   const roleLabel =
     userRole === "owner" ? "Egasi" :
-    userRole === "waiter" ? "Afitsiant" : "Admin";
+    userRole === "waiter" ? "Afitsiant" :
+    userRole === "kassir" ? "Kassir" :
+    userRole === "oshpaz" ? "Oshpaz" :
+    userRole === "mangalchi" ? "Mangalchi" :
+    userRole === "dastavkachi" ? "Dastavkachi" : "Admin";
 
   const SidebarContent = () => (
     <>
@@ -173,14 +216,22 @@ export function Layout({ children }: { children: React.ReactNode }) {
               <span className="text-xs text-muted-foreground ml-2">· {user.venueName}</span>
             )}
           </div>
-          <div className="shrink-0 flex items-center gap-2">
+          <div className="shrink-0 flex items-center gap-1">
+            <NotificationsBell />
             <div className="w-7 h-7 rounded-full bg-[#E0714F]/20 flex items-center justify-center text-xs font-bold text-[#E0714F]">
               {user?.username.charAt(0).toUpperCase()}
             </div>
           </div>
         </header>
 
-        <div className="flex-1 overflow-auto p-4 md:p-6 lg:p-8">{children}</div>
+        {/* Desktop top bar — only bell on right (admin/kassir only) */}
+        {(userRole === "admin" || userRole === "kassir") && (
+          <header className="hidden md:flex items-center justify-end gap-2 h-12 px-6 border-b border-border bg-card shrink-0">
+            <NotificationsBell />
+          </header>
+        )}
+
+        <div className="flex-1 overflow-auto p-3 sm:p-4 md:p-6 lg:p-8">{children}</div>
       </main>
     </div>
   );

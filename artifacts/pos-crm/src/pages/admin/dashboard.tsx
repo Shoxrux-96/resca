@@ -36,48 +36,48 @@ export default function AdminDashboard() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-foreground">Boshqaruv Paneli</h1>
-        <p className="text-muted-foreground mt-1">{user?.venueName}</p>
+        <h1 className="text-xl sm:text-2xl font-bold text-foreground">Boshqaruv Paneli</h1>
+        <p className="text-muted-foreground text-sm mt-1">{user?.venueName}</p>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4 md:gap-4">
         <Card className="bg-card border-border">
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-xs text-muted-foreground">Bugungi daromad</CardTitle>
-            <TrendingUp className="h-4 w-4 text-green-500" />
+          <CardHeader className="flex flex-row items-center justify-between pb-1 sm:pb-2 px-3 sm:px-6 pt-3 sm:pt-6">
+            <CardTitle className="text-[10px] sm:text-xs text-muted-foreground">Bugungi daromad</CardTitle>
+            <TrendingUp className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-green-500" />
           </CardHeader>
-          <CardContent>
-            <p className="text-xl font-bold text-green-400">{fmt(data?.todayRevenue ?? 0)}</p>
+          <CardContent className="px-3 sm:px-6 pb-3 sm:pb-6">
+            <p className="text-base sm:text-xl font-bold text-green-400">{fmt(data?.todayRevenue ?? 0)}</p>
           </CardContent>
         </Card>
 
         <Card className="bg-card border-border">
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-xs text-muted-foreground">Bugungi buyurtmalar</CardTitle>
-            <ShoppingBag className="h-4 w-4 text-blue-500" />
+          <CardHeader className="flex flex-row items-center justify-between pb-1 sm:pb-2 px-3 sm:px-6 pt-3 sm:pt-6">
+            <CardTitle className="text-[10px] sm:text-xs text-muted-foreground">Bugungi buyurtmalar</CardTitle>
+            <ShoppingBag className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-blue-500" />
           </CardHeader>
-          <CardContent>
-            <p className="text-xl font-bold text-foreground">{data?.todayOrderCount ?? 0}</p>
+          <CardContent className="px-3 sm:px-6 pb-3 sm:pb-6">
+            <p className="text-base sm:text-xl font-bold text-foreground">{data?.todayOrderCount ?? 0}</p>
           </CardContent>
         </Card>
 
         <Card className="bg-card border-border">
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-xs text-muted-foreground">Jami qarz</CardTitle>
-            <AlertCircle className="h-4 w-4 text-red-500" />
+          <CardHeader className="flex flex-row items-center justify-between pb-1 sm:pb-2 px-3 sm:px-6 pt-3 sm:pt-6">
+            <CardTitle className="text-[10px] sm:text-xs text-muted-foreground">Jami qarz</CardTitle>
+            <AlertCircle className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-red-500" />
           </CardHeader>
-          <CardContent>
-            <p className="text-xl font-bold text-red-400">{fmt(data?.totalDebt ?? 0)}</p>
+          <CardContent className="px-3 sm:px-6 pb-3 sm:pb-6">
+            <p className="text-base sm:text-xl font-bold text-red-400">{fmt(data?.totalDebt ?? 0)}</p>
           </CardContent>
         </Card>
 
         <Card className="bg-card border-border">
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-xs text-muted-foreground">To'lanmagan qarz</CardTitle>
-            <AlertCircle className="h-4 w-4 text-orange-500" />
+          <CardHeader className="flex flex-row items-center justify-between pb-1 sm:pb-2 px-3 sm:px-6 pt-3 sm:pt-6">
+            <CardTitle className="text-[10px] sm:text-xs text-muted-foreground">To'lanmagan qarz</CardTitle>
+            <AlertCircle className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-orange-500" />
           </CardHeader>
-          <CardContent>
-            <p className="text-xl font-bold text-orange-400">{data?.unpaidDebtCount ?? 0} ta</p>
+          <CardContent className="px-3 sm:px-6 pb-3 sm:pb-6">
+            <p className="text-base sm:text-xl font-bold text-orange-400">{data?.unpaidDebtCount ?? 0} ta</p>
           </CardContent>
         </Card>
       </div>
@@ -94,9 +94,9 @@ export default function AdminDashboard() {
           <p className="text-xs text-muted-foreground mb-3">
             Bu QR kodni bosib chiqarib, stol ustiga qo'ying. Mijozlar skanerlab menyuni ko'radi.
           </p>
-          <div className="flex items-center gap-5 bg-zinc-900/50 rounded-xl p-4 inline-flex">
+          <div className="flex flex-col sm:flex-row items-center gap-4 bg-zinc-900/50 rounded-xl p-4">
             <QRCodeSVG value={menuUrl} size={120} level="M" className="shrink-0" />
-            <div className="text-sm">
+            <div className="text-sm text-center sm:text-left">
               <p className="text-foreground font-medium">{user?.venueName}</p>
               <p className="text-muted-foreground mt-1 break-all text-xs">{menuUrl}</p>
               <p className="text-xs text-muted-foreground mt-2">

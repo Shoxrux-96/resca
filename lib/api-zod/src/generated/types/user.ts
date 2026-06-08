@@ -12,6 +12,8 @@ export interface User {
   username: string;
   /** @nullable */
   name?: string | null;
+  /** @nullable */
+  phone?: string | null;
   role: UserRole;
   /** @nullable */
   venueId?: number | null;

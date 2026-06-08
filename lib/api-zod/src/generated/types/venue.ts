@@ -12,6 +12,8 @@ export interface Venue {
   name: string;
   type: VenueType;
   /** @nullable */
+  logoUrl?: string | null;
+  /** @nullable */
   address?: string | null;
   /** @nullable */
   phone?: string | null;

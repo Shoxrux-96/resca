@@ -69,6 +69,7 @@ def get_current_user(
         id=user.id,
         username=user.username,
         name=user.name,
+        phone=user.phone,
         role=user.role,  # type: ignore[arg-type]
         venueId=user.venue_id,
         venueName=venue_name,

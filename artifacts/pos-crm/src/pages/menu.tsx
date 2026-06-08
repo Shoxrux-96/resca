@@ -29,7 +29,7 @@ type PublicMenu = {
 
 type Grouped = Record<string, PublicProduct[]>;
 
-const CATEGORY_ORDER = ["Barchasi", "Taomlar", "Salatlar", "Ichimliklar", "Spirtli ichimliklar", "Shirinliklar"];
+const CATEGORY_ORDER = ["Barchasi", "Taomlar", "Kaboblar", "Sho'rvalar", "Salatlar", "Mazzalar", "Souvslar", "Gamburgerlar", "Pizzalar", "Sushilar", "Fastfood", "Nonlar", "Lavashlar", "Pishiriqlar", "Ichimliklar", "Issiq ichimliklar", "Spirtli ichimliklar", "Pivolar", "Shirinliklar", "Muzqaymoqlar", "Tort va pirojniylar", "Boshqa"];
 
 function fmt(n: number) {
   return new Intl.NumberFormat("uz-UZ", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n) + " so'm";

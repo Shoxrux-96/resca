@@ -26,16 +26,16 @@ export default function OwnerVenues() {
   const qc = useQueryClient();
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({ name: "", type: "cafe" as VenueInputType, address: "", phone: "" });
+  const [form, setForm] = useState({ name: "", type: "cafe" as VenueInputType, logoUrl: "", address: "", phone: "" });
 
   const handleCreate = () => {
     createVenue.mutate(
-      { data: { name: form.name, type: form.type, address: form.address || undefined, phone: form.phone || undefined } },
+      { data: { name: form.name, type: form.type, logoUrl: form.logoUrl || undefined, address: form.address || undefined, phone: form.phone || undefined } },
       {
         onSuccess: () => {
           qc.invalidateQueries({ queryKey: getListVenuesQueryKey() });
           setOpen(false);
-          setForm({ name: "", type: "cafe", address: "", phone: "" });
+          setForm({ name: "", type: "cafe", logoUrl: "", address: "", phone: "" });
           toast({ title: "Filial qo'shildi" });
         },
         onError: () => toast({ title: "Xatolik", variant: "destructive" }),
@@ -89,8 +89,12 @@ export default function OwnerVenues() {
             >
               <CardHeader className="flex flex-row items-start justify-between pb-2">
                 <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-lg bg-blue-600/10 flex items-center justify-center">
-                    <Store className="h-5 w-5 text-blue-500" />
+                  <div className="w-10 h-10 rounded-lg bg-blue-600/10 flex items-center justify-center overflow-hidden">
+                    {venue.logoUrl ? (
+                      <img src={venue.logoUrl} alt={venue.name} className="w-full h-full object-cover" />
+                    ) : (
+                      <Store className="h-5 w-5 text-blue-500" />
+                    )}
                   </div>
                   <div>
                     <CardTitle className="text-foreground text-lg">{venue.name}</CardTitle>
@@ -131,6 +135,56 @@ export default function OwnerVenues() {
             <DialogTitle>Yangi Filial Qo'shish</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
+            <div>
+              <Label>Logo (ixtiyoriy)</Label>
+              <div className="mt-1 flex items-center gap-3">
+                <div className="w-16 h-16 rounded-lg border border-border bg-input overflow-hidden flex items-center justify-center shrink-0">
+                  {form.logoUrl ? (
+                    <img src={form.logoUrl} alt="logo" className="w-full h-full object-cover" />
+                  ) : (
+                    <Store className="h-6 w-6 text-muted-foreground" />
+                  )}
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <label className="inline-flex items-center justify-center gap-2 h-9 px-3 border border-dashed border-border rounded-lg cursor-pointer hover:border-blue-500 hover:bg-blue-500/5 transition-colors text-sm text-muted-foreground hover:text-blue-400">
+                    {form.logoUrl ? "Boshqa rasm" : "Logo yuklash"}
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="sr-only"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        const canvas = document.createElement("canvas");
+                        const img = new Image();
+                        img.onload = () => {
+                          const MAX = 240;
+                          let w = img.width, h = img.height;
+                          if (w > h) { if (w > MAX) { h = Math.round(h * MAX / w); w = MAX; } }
+                          else { if (h > MAX) { w = Math.round(w * MAX / h); h = MAX; } }
+                          canvas.width = w; canvas.height = h;
+                          canvas.getContext("2d")!.drawImage(img, 0, 0, w, h);
+                          const dataUrl = canvas.toDataURL("image/jpeg", 0.7);
+                          setForm((f) => ({ ...f, logoUrl: dataUrl }));
+                          URL.revokeObjectURL(img.src);
+                        };
+                        img.src = URL.createObjectURL(file);
+                        e.target.value = "";
+                      }}
+                    />
+                  </label>
+                  {form.logoUrl && (
+                    <button
+                      type="button"
+                      onClick={() => setForm((f) => ({ ...f, logoUrl: "" }))}
+                      className="text-xs text-red-500 hover:text-red-400 text-left"
+                    >
+                      O'chirish
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
             <div>
               <Label>Nomi</Label>
               <Input

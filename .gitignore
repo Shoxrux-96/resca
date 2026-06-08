@@ -17,6 +17,9 @@ node_modules
 *.sqlite
 *.sqlite3
 
+# python
+__pycache__/
+
 # environment
 .env.local
 backend/.env
@@ -58,3 +61,6 @@ Thumbs.db
 .cache/
 .local/
 .env
+
+# VAPID push notification keys
+backend/vapid_private.pem

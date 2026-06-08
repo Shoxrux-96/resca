@@ -10,6 +10,7 @@ import {
 } from "recharts";
 import { BarChart3, TrendingUp, ShoppingBag, Receipt, Printer, ChevronLeft, ChevronRight, Download } from "lucide-react";
 import * as XLSX from "xlsx";
+import ProductAnalytics from "@/pages/admin/product-analytics";
 
 function fmt(n: number) {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(2) + " mln";
@@ -64,9 +65,10 @@ export default function AdminReport() {
     query: { enabled: !!venueId, queryKey: getGetVenueReportQueryKey(venueId, { year }) },
   });
 
-  const filteredOrders = ((data?.allOrders ?? []) as Order[]).filter((o) =>
-    filterPayment === "all" ? true : o.paymentType === filterPayment
-  );
+  const filteredOrders = ((data?.allOrders ?? []) as Order[])
+    .filter((o) => filterPayment === "all" ? true : o.paymentType === filterPayment)
+    .slice()
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
   const chartData = (data?.monthlySales ?? []).map((m) => ({
     name: (m.monthName ?? "").slice(0, 3),
@@ -236,6 +238,9 @@ export default function AdminReport() {
               </div>
             </CardContent>
           </Card>
+
+          {/* Mahsulot analitikasi */}
+          <ProductAnalytics />
 
           {/* Orders table */}
           <Card className="bg-card border-border">

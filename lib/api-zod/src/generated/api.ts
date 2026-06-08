@@ -29,7 +29,8 @@ export const LoginResponse = zod.object({
   "id": zod.number(),
   "username": zod.string(),
   "name": zod.string().nullish(),
-  "role": zod.enum(['owner', 'admin']),
+  "phone": zod.string().nullish(),
+  "role": zod.enum(['owner', 'admin', 'kassir', 'waiter', 'oshpaz', 'mangalchi', 'dastavkachi']),
   "venueId": zod.number().nullish(),
   "venueName": zod.string().nullish(),
   "createdAt": zod.string().optional()
@@ -45,7 +46,8 @@ export const GetMeResponse = zod.object({
   "id": zod.number(),
   "username": zod.string(),
   "name": zod.string().nullish(),
-  "role": zod.enum(['owner', 'admin']),
+  "phone": zod.string().nullish(),
+  "role": zod.enum(['owner', 'admin', 'kassir', 'waiter', 'oshpaz', 'mangalchi', 'dastavkachi']),
   "venueId": zod.number().nullish(),
   "venueName": zod.string().nullish(),
   "createdAt": zod.string().optional()
@@ -59,6 +61,7 @@ export const ListVenuesResponseItem = zod.object({
   "id": zod.number(),
   "name": zod.string(),
   "type": zod.enum(['cafe', 'restaurant']),
+  "logoUrl": zod.string().nullish(),
   "address": zod.string().nullish(),
   "phone": zod.string().nullish(),
   "email": zod.string().nullish(),
@@ -78,6 +81,7 @@ export const ListVenuesResponse = zod.array(ListVenuesResponseItem)
 export const CreateVenueBody = zod.object({
   "name": zod.string(),
   "type": zod.enum(['cafe', 'restaurant']),
+  "logoUrl": zod.string().optional(),
   "address": zod.string().optional(),
   "phone": zod.string().optional(),
   "email": zod.string().optional(),
@@ -98,6 +102,7 @@ export const GetVenueResponse = zod.object({
   "id": zod.number(),
   "name": zod.string(),
   "type": zod.enum(['cafe', 'restaurant']),
+  "logoUrl": zod.string().nullish(),
   "address": zod.string().nullish(),
   "phone": zod.string().nullish(),
   "email": zod.string().nullish(),
@@ -120,6 +125,7 @@ export const UpdateVenueParams = zod.object({
 export const UpdateVenueBody = zod.object({
   "name": zod.string().optional(),
   "type": zod.enum(['cafe', 'restaurant']).optional(),
+  "logoUrl": zod.string().nullish(),
   "address": zod.string().nullish(),
   "phone": zod.string().nullish(),
   "email": zod.string().nullish(),
@@ -132,6 +138,7 @@ export const UpdateVenueResponse = zod.object({
   "id": zod.number(),
   "name": zod.string(),
   "type": zod.enum(['cafe', 'restaurant']),
+  "logoUrl": zod.string().nullish(),
   "address": zod.string().nullish(),
   "phone": zod.string().nullish(),
   "email": zod.string().nullish(),
@@ -167,7 +174,8 @@ export const AssignVenueAdminResponse = zod.object({
   "id": zod.number(),
   "username": zod.string(),
   "name": zod.string().nullish(),
-  "role": zod.enum(['owner', 'admin']),
+  "phone": zod.string().nullish(),
+  "role": zod.enum(['owner', 'admin', 'kassir', 'waiter', 'oshpaz', 'mangalchi', 'dastavkachi']),
   "venueId": zod.number().nullish(),
   "venueName": zod.string().nullish(),
   "createdAt": zod.string().optional()
@@ -727,7 +735,8 @@ export const ListUsersResponseItem = zod.object({
   "id": zod.number(),
   "username": zod.string(),
   "name": zod.string().nullish(),
-  "role": zod.enum(['owner', 'admin']),
+  "phone": zod.string().nullish(),
+  "role": zod.enum(['owner', 'admin', 'kassir', 'waiter', 'oshpaz', 'mangalchi', 'dastavkachi']),
   "venueId": zod.number().nullish(),
   "venueName": zod.string().nullish(),
   "createdAt": zod.string().optional()
@@ -742,7 +751,8 @@ export const CreateUserBody = zod.object({
   "username": zod.string(),
   "password": zod.string(),
   "name": zod.string().optional(),
-  "role": zod.enum(['owner', 'admin']),
+  "phone": zod.string().optional(),
+  "role": zod.enum(['owner', 'admin', 'kassir', 'waiter', 'oshpaz', 'mangalchi', 'dastavkachi']),
   "venueId": zod.number().nullish()
 })
 

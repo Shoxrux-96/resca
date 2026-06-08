@@ -33,6 +33,8 @@ export interface WaiterUser {
   id: number;
   username: string;
   name: string | null;
+  phone: string | null;
+  role: string | null;
   venueId: number | null;
   createdAt: string;
 }
@@ -63,6 +65,8 @@ export interface CreateWaiterInput {
   username: string;
   password: string;
   name?: string;
+  phone?: string;
+  role?: "kassir" | "waiter" | "oshpaz" | "mangalchi" | "dastavkachi";
 }
 
 /* ── Query keys ── */

@@ -16,6 +16,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { Store, TrendingUp, AlertCircle, Package, ShoppingBag, UserCheck, Phone, Mail, Instagram, Send, Facebook } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/hooks/use-auth";
 import { useState, useEffect } from "react";
 
 function fmt(n: number) {
@@ -32,6 +33,7 @@ export default function OwnerVenueDetail() {
   const updateVenue = useUpdateVenue();
   const qc = useQueryClient();
   const { toast } = useToast();
+  const { token } = useAuth();
   const [selectedUserId, setSelectedUserId] = useState<string>("");
 
   const [contactForm, setContactForm] = useState({
@@ -40,6 +42,7 @@ export default function OwnerVenueDetail() {
     instagram: "",
     telegram: "",
     facebook: "",
+    telegramBotToken: "",
   });
 
   useEffect(() => {
@@ -50,6 +53,7 @@ export default function OwnerVenueDetail() {
         instagram: venue.instagram ?? "",
         telegram: venue.telegram ?? "",
         facebook: venue.facebook ?? "",
+        telegramBotToken: (venue as any).telegramBotToken ?? "",
       });
     }
   }, [venue]);
@@ -81,6 +85,7 @@ export default function OwnerVenueDetail() {
           instagram: contactForm.instagram || null,
           telegram: contactForm.telegram || null,
           facebook: contactForm.facebook || null,
+          telegramBotToken: contactForm.telegramBotToken || null,
         },
       },
       {
@@ -91,6 +96,21 @@ export default function OwnerVenueDetail() {
         onError: () => toast({ title: "Xatolik", variant: "destructive" }),
       }
     );
+  };
+
+  const setupWebhook = async () => {
+    if (!token) return;
+    try {
+      const r = await fetch(`/api/venues/${id}/telegram/setup-webhook`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d?.detail || "Xatolik");
+      toast({ title: "✅ Bot webhook o'rnatildi", description: d.webhookUrl });
+    } catch (e: any) {
+      toast({ title: "Xatolik", description: e.message, variant: "destructive" });
+    }
   };
 
   if (isLoading) return <div className="text-muted-foreground">Yuklanmoqda...</div>;
@@ -229,6 +249,28 @@ export default function OwnerVenueDetail() {
                 onChange={(e) => setContactForm((p) => ({ ...p, facebook: e.target.value }))}
                 className="bg-input border-border text-foreground"
               />
+            </div>
+            <div className="space-y-1.5 sm:col-span-2">
+              <Label className="text-sm text-muted-foreground flex items-center gap-1.5">
+                <Send className="h-3.5 w-3.5" /> Telegram Bot Token
+              </Label>
+              <div className="flex gap-2">
+                <Input
+                  placeholder="123456789:AAEhBpVGr..."
+                  value={contactForm.telegramBotToken}
+                  onChange={(e) => setContactForm((p) => ({ ...p, telegramBotToken: e.target.value }))}
+                  className="bg-input border-border text-foreground font-mono text-xs flex-1"
+                />
+                {contactForm.telegramBotToken && (
+                  <Button type="button" variant="outline" size="sm" onClick={setupWebhook} className="shrink-0">
+                    Webhook o'rnatish
+                  </Button>
+                )}
+              </div>
+              <p className="text-[11px] text-muted-foreground">
+                @BotFather orqali bot yarating va tokeni shu yerga yozing → Saqlash → Webhook o'rnatish.
+                Saytingiz HTTPS public URL'da bo'lishi kerak.
+              </p>
             </div>
           </div>
           <div className="flex justify-end pt-1">

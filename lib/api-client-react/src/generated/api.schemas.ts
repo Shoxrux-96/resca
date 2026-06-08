@@ -20,6 +20,11 @@ export type UserRole = typeof UserRole[keyof typeof UserRole];
 export const UserRole = {
   owner: 'owner',
   admin: 'admin',
+  kassir: 'kassir',
+  waiter: 'waiter',
+  oshpaz: 'oshpaz',
+  mangalchi: 'mangalchi',
+  dastavkachi: 'dastavkachi',
 } as const;
 
 export interface User {
@@ -27,6 +32,8 @@ export interface User {
   username: string;
   /** @nullable */
   name?: string | null;
+  /** @nullable */
+  phone?: string | null;
   role: UserRole;
   /** @nullable */
   venueId?: number | null;
@@ -46,13 +53,18 @@ export type UserInputRole = typeof UserInputRole[keyof typeof UserInputRole];
 export const UserInputRole = {
   owner: 'owner',
   admin: 'admin',
+  kassir: 'kassir',
   waiter: 'waiter',
+  oshpaz: 'oshpaz',
+  mangalchi: 'mangalchi',
+  dastavkachi: 'dastavkachi',
 } as const;
 
 export interface UserInput {
   username: string;
   password: string;
   name?: string;
+  phone?: string;
   role: UserInputRole;
   /** @nullable */
   venueId?: number | null;
@@ -70,6 +82,8 @@ export interface Venue {
   id: number;
   name: string;
   type: VenueType;
+  /** @nullable */
+  logoUrl?: string | null;
   /** @nullable */
   address?: string | null;
   /** @nullable */
@@ -100,6 +114,7 @@ export const VenueInputType = {
 export interface VenueInput {
   name: string;
   type: VenueInputType;
+  logoUrl?: string;
   address?: string;
   phone?: string;
   email?: string;
@@ -119,6 +134,8 @@ export const VenueUpdateType = {
 export interface VenueUpdate {
   name?: string;
   type?: VenueUpdateType;
+  /** @nullable */
+  logoUrl?: string | null;
   /** @nullable */
   address?: string | null;
   /** @nullable */

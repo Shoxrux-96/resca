@@ -550,6 +550,21 @@ export default function AdminPos() {
   const venueId = user?.venueId ?? 0;
   const { data: products } = useListProducts(venueId, { query: { enabled: !!venueId, queryKey: getListProductsQueryKey(venueId) } });
   const { data: customers } = useListCustomers(venueId, { query: { enabled: !!venueId, queryKey: getListCustomersQueryKey(venueId) } });
+
+  // Omborxonadagi tayyor (direct) mahsulotlar
+  const { data: directItems } = useQuery<any[]>({
+    queryKey: ["inventory-direct", venueId],
+    enabled: !!venueId && !!token,
+    refetchInterval: 10_000,
+    queryFn: async () => {
+      const r = await fetch(`/api/venues/${venueId}/inventory`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!r.ok) return [];
+      const all = await r.json();
+      return all.filter((i: any) => i.itemType === "direct" && i.quantity > 0);
+    },
+  });
   const { data: rooms } = useListRooms(venueId, { query: { enabled: !!venueId, queryKey: getListRoomsQueryKey(venueId), refetchInterval: 5_000 } });
   const { data: tables } = useListTables(venueId, { query: { enabled: !!venueId, queryKey: getListTablesQueryKey(venueId), refetchInterval: 5_000 } });
   const { data: openOrders, refetch: refetchOpenOrders } = useListOpenOrders(venueId, {
@@ -584,8 +599,10 @@ export default function AdminPos() {
   const [tableSelection, setTableSelection] = useState<TableSelection>({ roomId: null, roomName: null, tableId: null, tableNumber: null });
   const searchRef = useRef<HTMLInputElement>(null);
 
-  const availableProducts = (products ?? []).filter((p) => p.isAvailable);
-  const suggestions = search.length > 0 ? availableProducts.filter((p) => p.name.toLowerCase().includes(search.toLowerCase())).slice(0, 8) : [];
+  const availableProducts = useMemo(() => {
+    return ((products ?? []).filter((p) => p.isAvailable)) as any[];
+  }, [products]);
+  const suggestions = search.length > 0 ? availableProducts.filter((p: any) => p.name.toLowerCase().includes(search.toLowerCase())).slice(0, 8) : [];
 
   const categories = useMemo(() => {
     const cats = Array.from(new Set(availableProducts.filter((p) => p.category).map((p) => p.category!)));
@@ -791,7 +808,7 @@ export default function AdminPos() {
       {/* Top bar */}
       <div className="bg-card border-b border-border px-3 md:px-4 py-2.5 flex items-center gap-2 md:gap-3">
         <ShoppingBag className="h-5 w-5 text-blue-500 shrink-0" />
-        <h1 className="text-foreground font-bold text-base md:text-lg">Sotuv Kassa</h1>
+        <h1 className="text-foreground font-bold text-base md:text-lg">Kassa POS</h1>
         {/* Active open order badge */}
         {activeOpenOrderId && (
           <span className="text-xs bg-red-900/50 text-red-300 border border-red-700 px-2 py-0.5 rounded-full font-medium">
@@ -927,9 +944,11 @@ export default function AdminPos() {
               {filteredProducts.length === 0 && search.length > 0 ? (
                 <p className="text-sm text-muted-foreground text-center py-6">"<b>{search}</b>" bo'yicha mahsulot topilmadi</p>
               ) : filteredProducts.length > 0 ? (
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2.5">
                   {filteredProducts.map((product) => {
                     const inCart = cart.find((i) => i.product.id === product.id);
+                    const unit = (product as any).unit || "";
+                    const stock = (product as any).stock as number | null;
                     return (
                       <button
                         key={product.id}
@@ -953,13 +972,16 @@ export default function AdminPos() {
                           />
                         ) : (
                           <div className="w-full aspect-square rounded-lg bg-zinc-300 dark:bg-zinc-800 flex items-center justify-center mb-2">
-                            <span className="text-2xl opacity-40">🍽️</span>
+                            <span className="text-2xl opacity-40">{(product as any)._isDirect ? "📦" : "🍽️"}</span>
                           </div>
                         )}
                         <p className="text-sm font-semibold text-foreground leading-tight line-clamp-2">{product.name}</p>
-                        {product.category && (
-                          <p className="text-xs text-muted-foreground mt-0.5">{product.category}</p>
-                        )}
+                        <div className="flex items-center gap-1.5 mt-0.5">
+                          {unit && <span className="text-[10px] px-1.5 py-0.5 bg-blue-500/10 text-blue-400 rounded font-medium">{unit}</span>}
+                          {stock != null && (
+                            <span className={`text-[10px] ${stock <= 5 ? "text-red-400" : "text-muted-foreground"}`}>{stock} ta</span>
+                          )}
+                        </div>
                         <p className="text-sm font-bold text-blue-400 mt-1">{fmt(product.price)} so'm</p>
                       </button>
                     );

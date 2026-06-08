@@ -12,4 +12,9 @@ export type UserInputRole = typeof UserInputRole[keyof typeof UserInputRole];
 export const UserInputRole = {
   owner: 'owner',
   admin: 'admin',
+  kassir: 'kassir',
+  waiter: 'waiter',
+  oshpaz: 'oshpaz',
+  mangalchi: 'mangalchi',
+  dastavkachi: 'dastavkachi',
 } as const;

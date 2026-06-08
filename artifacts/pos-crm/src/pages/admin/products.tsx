@@ -8,16 +8,20 @@ import {
   type Product,
 } from "@workspace/api-client-react";
 import { useAuth } from "@/hooks/use-auth";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient, useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Package, Pencil, Trash2, Search, ImageIcon, Layers, Star } from "lucide-react";
+import { Plus, Package, Pencil, Trash2, Search, ImageIcon, Layers, Star, X } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+
+type InvItem = { id: number; name: string; unit: string; itemType: string; quantity: number };
+type RecipeRow = { inventoryItemId: number; name: string; unit: string; quantity: string };
 
 function fmt(n: number) {
   return new Intl.NumberFormat("uz-UZ", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n) + " so'm";
@@ -26,46 +30,35 @@ function fmt(n: number) {
 const CATEGORIES = [
   { value: "Taomlar", label: "🍽️ Taomlar", ru: "Блюда", color: "bg-orange-500/10 text-orange-400 border-orange-800" },
   { value: "Sho'rvalar", label: "🍜 Sho'rvalar", ru: "Супы", color: "bg-yellow-500/10 text-yellow-400 border-yellow-800" },
+  { value: "Kaboblar", label: "🥩 Kaboblar", ru: "Шашлыки", color: "bg-red-600/10 text-red-500 border-red-800" },
   { value: "Salatlar", label: "🥗 Salatlar", ru: "Салаты", color: "bg-green-500/10 text-green-400 border-green-800" },
-  { value: "Ichimliklar", label: "🥤 Ichimliklar", ru: "Напитки", color: "bg-blue-500/10 text-blue-400 border-blue-800" },
-  { value: "Shirinliklar", label: "🍰 Shirinliklar", ru: "Десерты", color: "bg-pink-500/10 text-pink-400 border-pink-800" },
-  { value: "Muzqaymoqlar", label: "🍦 Muzqaymoqlar", ru: "Мороженое", color: "bg-cyan-500/10 text-cyan-400 border-cyan-800" },
-  { value: "Spirtli ichimliklar", label: "🍷 Spirtli ichimliklar", ru: "Алкоголь", color: "bg-purple-500/10 text-purple-400 border-purple-800" },
-  { value: "Nonlar", label: "🍞 Nonlar", ru: "Хлеб", color: "bg-amber-500/10 text-amber-400 border-amber-800" },
-  { value: "Lavashlar", label: "🫓 Lavashlar", ru: "Лаваши", color: "bg-amber-500/10 text-amber-400 border-amber-800" },
+  { value: "Lavashlar", label: "🫓 Lavashlar", ru: "Лаваши", color: "bg-amber-600/10 text-amber-500 border-amber-800" },
   { value: "Gamburgerlar", label: "🍔 Gamburgerlar", ru: "Бургеры", color: "bg-red-500/10 text-red-400 border-red-800" },
   { value: "Pizzalar", label: "🍕 Pizzalar", ru: "Пицца", color: "bg-red-500/10 text-red-400 border-red-800" },
   { value: "Sushilar", label: "🍣 Sushilar", ru: "Суши", color: "bg-indigo-500/10 text-indigo-400 border-indigo-800" },
-  { value: "Mazzalar", label: "🍡 Mazzalar", ru: "Закуски", color: "bg-zinc-500/10 text-muted-foreground border-border" },
-  { value: "Fastfood", label: "🌮 Fastfood", ru: "Fastfood", color: "bg-orange-500/10 text-orange-400 border-orange-800" },
-  { value: "Boshqa", label: "📦 Boshqa", ru: "Другое", color: "bg-zinc-500/10 text-muted-foreground border-border" },
+  { value: "Fastfood", label: "🌮 Fastfood", ru: "Фастфуд", color: "bg-orange-500/10 text-orange-400 border-orange-800" },
+  { value: "Ichimliklar", label: "🍵 Ichimliklar", ru: "Напитки", color: "bg-blue-500/10 text-blue-400 border-blue-800" },
 ];
 
 const UNITS = [
-  { value: "dona", label: "dona (штука)" },
-  { value: "porsiya", label: "porsiya (порция)" },
-  { value: "stakan", label: "stakan (стакан)" },
-  { value: "shisha", label: "shisha (бутылка)" },
-  { value: "quti", label: "quti (коробка/банка)" },
-  { value: "kg", label: "kg (кг)" },
-  { value: "gram", label: "gram (грамм)" },
-  { value: "litr", label: "litr (литр)" },
-  { value: "ml", label: "ml (мл)" },
-  { value: "kosa", label: "kosa (миска)" },
-  { value: "tarelka", label: "tarelka (тарелка)" },
-  { value: "piyola", label: "piyola (пиала)" },
-  { value: "qadoq", label: "qadoq (пачка)" },
-  { value: "lagan", label: "lagan (ляган)" },
+  { value: "1 PORSIYA", label: "1 PORSIYA" },
+  { value: "1.5 PORSIYA", label: "1.5 PORSIYA" },
+  { value: "KG", label: "KG" },
+  { value: "GR", label: "GR" },
+  { value: "LITR", label: "LITR" },
+  { value: "BAKAL", label: "BAKAL" },
+  { value: "CHOYNAK", label: "CHOYNAK" },
+  { value: "IDISH (TOVOQ)", label: "IDISH (TOVOQ)" },
 ];
 
 const getCategoryMeta = (value: string) =>
-  CATEGORIES.find((c) => c.value === value) ?? { label: value, ru: "", color: "bg-zinc-500/10 text-muted-foreground border-border" };
+  CATEGORIES.find((c) => c.value === value) ?? { value, label: value, ru: "", color: "bg-zinc-500/10 text-muted-foreground border-border" };
 
 const emptyForm = {
   name: "",
   price: "",
   category: CATEGORIES[0].value,
-  unit: UNITS[0].value,
+  unit: "1 PORSIYA",
   description: "",
   imageUrl: "",
   stock: "",
@@ -89,13 +82,56 @@ export default function AdminProducts() {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Product | null>(null);
   const [form, setForm] = useState(emptyForm);
+  const [recipe, setRecipe] = useState<RecipeRow[]>([]);
   const [search, setSearch] = useState("");
   const [filterCat, setFilterCat] = useState("all");
   const [viewMode, setViewMode] = useState<ViewMode>("grid");
 
+  const { token } = useAuth();
+  const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+
+  // Omborxonadagi masalliqlar ro'yxati
+  const { data: ingredients = [] } = useQuery<InvItem[]>({
+    queryKey: ["inventory-ingredients", venueId],
+    enabled: !!venueId && !!token,
+    queryFn: async () => {
+      const r = await fetch(`/api/venues/${venueId}/inventory`, { headers });
+      const all: InvItem[] = await r.json();
+      return all.filter((i) => i.itemType === "ingredient");
+    },
+  });
+
+  // Retseptni saqlash
+  const saveRecipe = useMutation({
+    mutationFn: async ({ productId, items }: { productId: number; items: { inventoryItemId: number; quantity: number }[] }) => {
+      const r = await fetch(`/api/venues/${venueId}/products/${productId}/recipe`, {
+        method: "PUT", headers, body: JSON.stringify(items),
+      });
+      if (!r.ok) throw new Error("Recipe save failed");
+      return r.json();
+    },
+  });
+
+  // Retseptni yuklash (tahrirlashda)
+  const loadRecipe = async (productId: number) => {
+    try {
+      const r = await fetch(`/api/venues/${venueId}/products/${productId}/recipe`, { headers });
+      if (r.ok) {
+        const data = await r.json();
+        setRecipe(data.map((d: any) => ({
+          inventoryItemId: d.inventoryItemId,
+          name: d.inventoryItemName ?? "",
+          unit: d.unit ?? "",
+          quantity: String(d.quantity),
+        })));
+      }
+    } catch { /* ignore */ }
+  };
+
   const openCreate = () => {
     setEditing(null);
     setForm(emptyForm);
+    setRecipe([]);
     setOpen(true);
   };
 
@@ -105,12 +141,14 @@ export default function AdminProducts() {
       name: p.name,
       price: String(p.price),
       category: p.category,
-      unit: (p as any).unit ?? UNITS[0].value,
+      unit: (p as any).unit ?? "1 PORSIYA",
       description: p.description ?? "",
       imageUrl: (p as any).imageUrl ?? "",
       stock: (p as any).stock != null ? String((p as any).stock) : "",
       isAvailable: p.isAvailable ?? true,
     });
+    setRecipe([]);
+    loadRecipe(p.id);
     setOpen(true);
   };
 
@@ -130,14 +168,27 @@ export default function AdminProducts() {
       stock: form.stock ? Number(form.stock) : undefined,
       isAvailable: form.isAvailable,
     };
+    const recipeItems = recipe
+      .filter((r) => r.inventoryItemId && parseFloat(r.quantity) > 0)
+      .map((r) => ({ inventoryItemId: r.inventoryItemId, quantity: parseFloat(r.quantity) }));
+
     if (editing) {
       updateProduct.mutate({ venueId, id: editing.id, data }, {
-        onSuccess: () => { invalidate(); setOpen(false); toast({ title: "✅ Yangilandi" }); },
+        onSuccess: () => {
+          saveRecipe.mutate({ productId: editing.id, items: recipeItems });
+          invalidate(); setOpen(false); toast({ title: "✅ Yangilandi" });
+        },
         onError: () => toast({ title: "Xatolik", variant: "destructive" }),
       });
     } else {
       createProduct.mutate({ venueId, data }, {
-        onSuccess: () => { invalidate(); setOpen(false); toast({ title: "✅ Mahsulot qo'shildi" }); },
+        onSuccess: (newProduct: any) => {
+          const pid = newProduct?.id;
+          if (pid && recipeItems.length > 0) {
+            saveRecipe.mutate({ productId: pid, items: recipeItems });
+          }
+          invalidate(); setOpen(false); toast({ title: "✅ Taom qo'shildi" });
+        },
         onError: () => toast({ title: "Xatolik", variant: "destructive" }),
       });
     }
@@ -167,12 +218,12 @@ export default function AdminProducts() {
       {/* Header */}
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
-          <h1 className="text-xl sm:text-2xl font-bold text-foreground">Mahsulotlar</h1>
-          <p className="text-muted-foreground text-sm mt-0.5">{products?.length ?? 0} ta mahsulot</p>
+          <h1 className="text-xl sm:text-2xl font-bold text-foreground">Taomlar</h1>
+          <p className="text-muted-foreground text-sm mt-0.5">{products?.length ?? 0} ta taom</p>
         </div>
         <Button onClick={openCreate} className="bg-blue-600 hover:bg-blue-700 gap-2 shrink-0" size="sm">
           <Plus className="h-4 w-4" />
-          <span className="hidden sm:inline">Yangi</span> Mahsulot
+          <span className="hidden sm:inline">Yangi</span> Taom
         </Button>
       </div>
 
@@ -183,21 +234,22 @@ export default function AdminProducts() {
           <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Mahsulot qidirish..."
+            placeholder="Taom qidirish..."
             className="pl-9 bg-input border-border text-foreground h-9"
           />
         </div>
-        <select
-          value={filterCat}
-          onChange={(e) => setFilterCat(e.target.value)}
-          className="bg-input border border-border text-foreground rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-600 h-9"
-        >
-          <option value="all">Barcha kategoriyalar</option>
-          {usedCategories.map((c) => {
-            const m = getCategoryMeta(c);
-            return <option key={c} value={c}>{m.label}</option>;
-          })}
-        </select>
+        <Select value={filterCat} onValueChange={(v) => setFilterCat(v)}>
+          <SelectTrigger className="w-[180px] bg-input border-border h-9 text-sm">
+            <SelectValue placeholder="Barcha kategoriyalar" />
+          </SelectTrigger>
+          <SelectContent className="bg-card border-border max-h-60 overflow-y-auto">
+            <SelectItem value="all">Barcha kategoriyalar</SelectItem>
+            {usedCategories.map((c) => {
+              const m = getCategoryMeta(c);
+              return <SelectItem key={c} value={c}>{m.label}</SelectItem>;
+            })}
+          </SelectContent>
+        </Select>
         {/* View mode */}
         <div className="flex gap-1 bg-muted rounded-md p-1">
           <button
@@ -227,8 +279,8 @@ export default function AdminProducts() {
           <div className="w-16 h-16 bg-muted rounded-2xl flex items-center justify-center mb-4">
             <Package className="h-8 w-8 text-muted-foreground" />
           </div>
-          <p className="text-muted-foreground font-medium">Mahsulotlar yo'q</p>
-          <p className="text-muted-foreground text-sm mt-1">Birinchi mahsulotni qo'shing</p>
+          <p className="text-muted-foreground font-medium">Taomlar yo'q</p>
+          <p className="text-muted-foreground text-sm mt-1">Birinchi taomni qo'shing</p>
           <Button onClick={openCreate} className="mt-4 bg-blue-600 hover:bg-blue-700 gap-2">
             <Plus className="h-4 w-4" />
             Qo'shish
@@ -287,127 +339,129 @@ export default function AdminProducts() {
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="bg-card border-border text-foreground max-w-lg">
           <DialogHeader>
-            <DialogTitle>{editing ? "Mahsulotni Tahrirlash" : "Yangi Mahsulot Qo'shish"}</DialogTitle>
+            <DialogTitle>{editing ? "Taomni Tahrirlash" : "Yangi Taom Yaratish"}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4 max-h-[70vh] overflow-y-auto pr-1">
-            {/* Image preview */}
-            {form.imageUrl && (
-              <div className="relative rounded-lg overflow-hidden h-36 bg-muted">
-                <img src={form.imageUrl} alt="preview" className="w-full h-full object-cover" />
-              </div>
-            )}
-
-            <div className="grid grid-cols-2 gap-3">
-              <div className="col-span-2">
-                <Label className="text-zinc-300 text-xs">Nomi *</Label>
-                <Input
-                  value={form.name}
-                  onChange={(e) => setForm({ ...form, name: e.target.value })}
-                  placeholder="Mahsulot nomi"
-                  className="bg-input border-border mt-1"
-                />
-              </div>
-
-              <div>
-                <Label className="text-zinc-300 text-xs">Narxi (so'm) *</Label>
-                <Input
-                  type="number"
-                  value={form.price}
-                  onChange={(e) => setForm({ ...form, price: e.target.value })}
-                  placeholder="15000"
-                  className="bg-input border-border mt-1"
-                />
-              </div>
-
-              <div>
-                <Label className="text-zinc-300 text-xs">Miqdor (zaxira)</Label>
-                <Input
-                  type="number"
-                  value={form.stock}
-                  onChange={(e) => setForm({ ...form, stock: e.target.value })}
-                  placeholder="100"
-                  className="bg-input border-border mt-1"
-                />
-              </div>
-
-              <div className="col-span-2">
-                <Label className="text-zinc-300 text-xs">Kategoriya *</Label>
-                <select
-                  value={form.category}
-                  onChange={(e) => setForm({ ...form, category: e.target.value })}
-                  className="w-full mt-1 bg-input border border-border text-foreground rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-600"
-                >
-                  {CATEGORIES.map((c) => (
-                    <option key={c.value} value={c.value}>{c.label} · {c.ru}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="col-span-2">
-                <Label className="text-zinc-300 text-xs">Rasm (ixtiyoriy)</Label>
-                <div className="mt-1 space-y-2">
-                  {/* Image preview */}
-                  {form.imageUrl && (
-                    <div className="relative rounded-lg overflow-hidden h-28 bg-zinc-800 group">
-                      <img src={form.imageUrl} alt="preview" className="w-full h-full object-cover" />
-                      <button
-                        type="button"
-                        onClick={() => setForm({ ...form, imageUrl: "" })}
-                        className="absolute top-1.5 right-1.5 bg-black/60 hover:bg-black/80 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
-                      >
-                        <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-                      </button>
-                    </div>
+            {/* Rasm — tepada, kvadrat */}
+            <div>
+              <Label className="text-zinc-300 text-xs">Rasm</Label>
+              <div className="mt-1.5 flex flex-col items-center gap-2">
+                <div className="w-36 h-36 rounded-xl border border-border bg-zinc-800 overflow-hidden flex items-center justify-center">
+                  {form.imageUrl ? (
+                    <img src={form.imageUrl} alt="preview" className="w-full h-full object-cover" />
+                  ) : (
+                    <ImageIcon className="h-10 w-10 text-muted-foreground opacity-30" />
                   )}
-                  <label className="flex items-center justify-center gap-2 w-full h-10 border border-dashed border-zinc-600 rounded-lg cursor-pointer hover:border-blue-500 hover:bg-blue-500/5 transition-colors text-sm text-muted-foreground hover:text-blue-400">
-                    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
-                    {form.imageUrl ? "Boshqa rasm tanlash" : "Kompyuterdan rasm yuklash"}
-                    <input
-                      type="file"
-                      accept="image/*"
-                      className="sr-only"
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (!file) return;
-                        const canvas = document.createElement("canvas");
-                        const img = new Image();
-                        img.onload = () => {
-                          const MAX = 240;
-                          let w = img.width, h = img.height;
-                          if (w > h) { if (w > MAX) { h = Math.round(h * MAX / w); w = MAX; } }
-                          else { if (h > MAX) { w = Math.round(w * MAX / h); h = MAX; } }
-                          canvas.width = w; canvas.height = h;
-                          canvas.getContext("2d")!.drawImage(img, 0, 0, w, h);
-                          const dataUrl = canvas.toDataURL("image/jpeg", 0.55);
-                          setForm((f) => ({ ...f, imageUrl: dataUrl }));
-                          URL.revokeObjectURL(img.src);
-                        };
-                        img.src = URL.createObjectURL(file);
-                        e.target.value = "";
-                      }}
-                    />
+                </div>
+                <div className="flex items-center gap-2">
+                  <label className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-dashed border-zinc-600 rounded-lg cursor-pointer hover:border-blue-500 hover:bg-blue-500/5 transition-colors text-xs text-muted-foreground hover:text-blue-400">
+                    {form.imageUrl ? "Boshqa rasm" : "Rasm yuklash"}
+                    <input type="file" accept="image/*" className="sr-only" onChange={(e) => {
+                      const file = e.target.files?.[0]; if (!file) return;
+                      const canvas = document.createElement("canvas"); const img = new Image();
+                      img.onload = () => { const S=300; canvas.width=S; canvas.height=S; const ctx=canvas.getContext("2d")!; const sc=Math.max(S/img.width,S/img.height); const w=img.width*sc,h=img.height*sc; ctx.drawImage(img,(S-w)/2,(S-h)/2,w,h); setForm(f=>({...f,imageUrl:canvas.toDataURL("image/jpeg",0.7)})); URL.revokeObjectURL(img.src); };
+                      img.src = URL.createObjectURL(file); e.target.value = "";
+                    }} />
                   </label>
+                  {form.imageUrl && <button type="button" onClick={() => setForm({...form, imageUrl:""})} className="text-xs text-red-500">O'chirish</button>}
                 </div>
               </div>
+            </div>
 
-              <div className="col-span-2">
-                <Label className="text-zinc-300 text-xs">Tavsif (ixtiyoriy)</Label>
-                <Input
-                  value={form.description}
-                  onChange={(e) => setForm({ ...form, description: e.target.value })}
-                  placeholder="Mahsulot haqida qisqacha ma'lumot"
-                  className="bg-input border-border mt-1"
-                />
-              </div>
+            {/* Nomi */}
+            <div>
+              <Label className="text-zinc-300 text-xs">Nomi *</Label>
+              <Input value={form.name} onChange={(e) => setForm({...form, name: e.target.value})} placeholder="Taom nomi" className="bg-input border-border mt-1" />
+            </div>
 
-              <div className="col-span-2 flex items-center gap-3 pt-1">
-                <Switch
-                  checked={form.isAvailable}
-                  onCheckedChange={(v) => setForm({ ...form, isAvailable: v })}
-                  className="data-[state=checked]:bg-green-600"
-                />
-                <Label className="text-zinc-300 text-sm">Sotuvda mavjud</Label>
+            {/* Kategoriya + Birlik */}
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label className="text-zinc-300 text-xs">Kategoriya *</Label>
+                <Select value={form.category} onValueChange={(v) => setForm({...form, category: v})}>
+                  <SelectTrigger className="mt-1 bg-input border-border"><SelectValue /></SelectTrigger>
+                  <SelectContent className="bg-card border-border !max-h-60" position="popper" sideOffset={4}>
+                    {CATEGORIES.map((c) => <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>)}
+                  </SelectContent>
+                </Select>
               </div>
+              <div>
+                <Label className="text-zinc-300 text-xs">Sotuv birligi</Label>
+                <Select value={form.unit} onValueChange={(v) => setForm({...form, unit: v})}>
+                  <SelectTrigger className="mt-1 bg-input border-border"><SelectValue /></SelectTrigger>
+                  <SelectContent className="bg-card border-border !max-h-60" position="popper" sideOffset={4}>
+                    {UNITS.map((u) => <SelectItem key={u.value} value={u.value}>{u.label}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            {/* Narxi */}
+            <div>
+              <Label className="text-zinc-300 text-xs">Narxi (so'm) *</Label>
+              <Input type="number" value={form.price} onChange={(e) => setForm({...form, price: e.target.value})} placeholder="35000" className="bg-input border-border mt-1" />
+            </div>
+
+            {/* Tavsif */}
+            <div>
+              <Label className="text-zinc-300 text-xs">Tavsif (ixtiyoriy)</Label>
+              <Input value={form.description} onChange={(e) => setForm({...form, description: e.target.value})} placeholder="Taom haqida qisqacha ma'lumot" className="bg-input border-border mt-1" />
+            </div>
+
+            {/* ── Masalliqlar (Retsept) ── */}
+            <div className="border border-border rounded-xl p-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <Label className="text-zinc-300 text-xs font-semibold">Masalliqlar (retsept)</Label>
+                <span className="text-[10px] text-muted-foreground">{recipe.length} ta</span>
+              </div>
+              <p className="text-[10px] text-muted-foreground">1 porsiya tayyorlash uchun kerak bo'ladigan masalliqlar. Sotilganda ombordan avtomatik kamayadi.</p>
+
+              {recipe.map((row, idx) => (
+                <div key={idx} className="flex items-center gap-2">
+                  <div className="flex-1 text-sm text-foreground truncate">
+                    {row.name} <span className="text-muted-foreground text-xs">({row.unit})</span>
+                  </div>
+                  <Input
+                    type="number"
+                    value={row.quantity}
+                    onChange={(e) => { const arr = [...recipe]; arr[idx] = {...arr[idx], quantity: e.target.value}; setRecipe(arr); }}
+                    className="w-20 h-8 text-xs bg-input border-border"
+                    placeholder="0.3"
+                  />
+                  <span className="text-xs text-muted-foreground w-8">{row.unit}</span>
+                  <button type="button" onClick={() => setRecipe(recipe.filter((_, i) => i !== idx))} className="text-red-500 hover:text-red-400 p-1">
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              ))}
+
+              {/* Masalliq qo'shish */}
+              {ingredients.length > 0 && (
+                <Select onValueChange={(v) => {
+                  const item = ingredients.find((i) => String(i.id) === v);
+                  if (item && !recipe.find((r) => r.inventoryItemId === item.id)) {
+                    setRecipe([...recipe, { inventoryItemId: item.id, name: item.name, unit: item.unit, quantity: "" }]);
+                  }
+                }}>
+                  <SelectTrigger className="h-8 bg-input border-border text-xs">
+                    <SelectValue placeholder="+ Masalliq qo'shish..." />
+                  </SelectTrigger>
+                  <SelectContent className="bg-card border-border !max-h-48" position="popper" sideOffset={4}>
+                    {ingredients.filter((i) => !recipe.find((r) => r.inventoryItemId === i.id)).map((i) => (
+                      <SelectItem key={i.id} value={String(i.id)}>{i.name} ({i.quantity} {i.unit} mavjud)</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+              {ingredients.length === 0 && (
+                <p className="text-[10px] text-muted-foreground">Omborxonada masalliq yo'q. Avval omborxonaga "Masalliq" turidagi mahsulot qo'shing.</p>
+              )}
+            </div>
+
+            {/* Sotuvda mavjud */}
+            <div className="flex items-center gap-3">
+              <Switch checked={form.isAvailable} onCheckedChange={(v) => setForm({...form, isAvailable: v})} className="data-[state=checked]:bg-green-600" />
+              <Label className="text-zinc-300 text-sm">Sotuvda mavjud</Label>
             </div>
           </div>
           <DialogFooter>

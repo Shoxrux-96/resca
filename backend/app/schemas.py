@@ -22,8 +22,9 @@ class LoginInput(BaseModel):
 class User(BaseModel):
     id: int
     username: str
-    role: Literal["owner", "admin", "waiter"]
+    role: Literal["owner", "admin", "kassir", "waiter", "oshpaz", "mangalchi", "dastavkachi"]
     name: Optional[str] = None
+    phone: Optional[str] = None
     venueId: Optional[int] = None
     venueName: Optional[str] = None
     createdAt: datetime
@@ -37,7 +38,8 @@ class UserInput(BaseModel):
     )
     password: str
     name: Optional[str] = None
-    role: Literal["owner", "admin", "waiter"]
+    phone: Optional[str] = None
+    role: Literal["owner", "admin", "kassir", "waiter", "oshpaz", "mangalchi", "dastavkachi"]
     venueId: Optional[int] = None
 
 
@@ -45,7 +47,8 @@ class UserUpdate(BaseModel):
     username: Optional[str] = Field(default=None, min_length=3, max_length=64, pattern=r"^[A-Za-z0-9_.@-]+$")
     password: Optional[str] = None
     name: Optional[str] = None
-    role: Optional[Literal["owner", "admin", "waiter"]] = None
+    phone: Optional[str] = None
+    role: Optional[Literal["owner", "admin", "kassir", "waiter", "oshpaz", "mangalchi", "dastavkachi"]] = None
     venueId: Optional[int] = None
 
 
@@ -57,12 +60,14 @@ class AuthResponse(BaseModel):
 class VenueBase(BaseModel):
     name: str
     type: Literal["cafe", "restaurant"]
+    logoUrl: Optional[str] = None
     address: Optional[str] = None
     phone: Optional[str] = None
     email: Optional[str] = None
     instagram: Optional[str] = None
     telegram: Optional[str] = None
     facebook: Optional[str] = None
+    telegramBotToken: Optional[str] = None
 
 
 class VenueInput(VenueBase):
@@ -72,12 +77,14 @@ class VenueInput(VenueBase):
 class VenueUpdate(BaseModel):
     name: Optional[str] = None
     type: Optional[Literal["cafe", "restaurant"]] = None
+    logoUrl: Optional[str] = None
     address: Optional[str] = None
     phone: Optional[str] = None
     email: Optional[str] = None
     instagram: Optional[str] = None
     telegram: Optional[str] = None
     facebook: Optional[str] = None
+    telegramBotToken: Optional[str] = None
 
 
 class Venue(VenueBase):
@@ -224,6 +231,8 @@ class WaiterUser(BaseModel):
     id: int
     username: str
     name: Optional[str] = None
+    phone: Optional[str] = None
+    role: Optional[str] = None
     venueId: Optional[int] = None
     createdAt: datetime
 
@@ -232,6 +241,8 @@ class CreateWaiterInput(BaseModel):
     username: str = Field(min_length=3, max_length=64, pattern=r"^[A-Za-z0-9_.@-]+$")
     password: str = Field(min_length=1, max_length=256)
     name: Optional[str] = None
+    phone: Optional[str] = None
+    role: Optional[Literal["kassir", "waiter", "oshpaz", "mangalchi", "dastavkachi"]] = "waiter"
 
 
 class CreateOpenOrderItemInput(BaseModel):
@@ -435,3 +446,221 @@ class PublicMenu(BaseModel):
     venue: PublicVenue
     products: list[PublicProduct]
 
+
+
+# --- Inventory (Omborxona) ---
+
+class InventoryItemBase(BaseModel):
+    name: str
+    category: str = "boshqa"
+    itemType: str = "ingredient"  # direct|ingredient
+    imageUrl: Optional[str] = None
+    unit: str = "dona"  # sotuv birligi: kg|litr|dona
+    packUnit: Optional[str] = None  # kirim birligi: blok|quti|meshok
+    packSize: float = 1  # 1 kirim birligida nechta sotuv birligi
+    quantity: float = 0  # sotuv birligida umumiy miqdor
+    minQuantity: float = 0
+    costPrice: float = 0
+    sellPrice: float = 0
+
+
+class InventoryItemInput(InventoryItemBase):
+    pass
+
+
+class InventoryItemUpdate(BaseModel):
+    name: Optional[str] = None
+    category: Optional[str] = None
+    itemType: Optional[str] = None
+    imageUrl: Optional[str] = None
+    unit: Optional[str] = None
+    packUnit: Optional[str] = None
+    packSize: Optional[float] = None
+    quantity: Optional[float] = None
+    minQuantity: Optional[float] = None
+    costPrice: Optional[float] = None
+    sellPrice: Optional[float] = None
+
+
+class InventoryItem(InventoryItemBase):
+    id: int
+    venueId: int
+    createdAt: datetime
+
+
+class InventoryTransactionInput(BaseModel):
+    itemId: int
+    type: Literal["in", "out"]
+    quantity: float
+    note: Optional[str] = None
+
+
+class InventoryTransaction(BaseModel):
+    id: int
+    venueId: int
+    itemId: int
+    itemName: Optional[str] = None
+    type: Literal["in", "out"]
+    quantity: float
+    note: Optional[str] = None
+    createdBy: Optional[int] = None
+    createdByName: Optional[str] = None
+    createdAt: datetime
+
+
+class InventoryAlert(BaseModel):
+    id: int
+    name: str
+    unit: str
+    quantity: float
+    minQuantity: float
+
+
+# --- Product Recipe (Retsept) ---
+
+class RecipeItemInput(BaseModel):
+    inventoryItemId: int
+    quantity: float  # bitta taom uchun ketadigan miqdor
+
+
+class RecipeItem(BaseModel):
+    id: int
+    inventoryItemId: int
+    inventoryItemName: Optional[str] = None
+    unit: Optional[str] = None
+    quantity: float
+
+
+# --- Venue Settings (Funksiyalar sozlamalari) ---
+
+class VenueSettingsSchema(BaseModel):
+    receiptQrEnabled: bool = True
+    receiptLogoEnabled: bool = True
+    onlineOrdersEnabled: bool = False
+    kassirCancelReceipt: bool = False
+    kassirGiveDiscount: bool = False
+    roomBookingEnabled: bool = True
+    waiterCancelOrder: bool = False
+    waiterGiveDiscount: bool = False
+    kitchenAutoAccept: bool = False
+    inventoryLowAlert: bool = True
+
+
+class VenueSettingsUpdate(BaseModel):
+    receiptQrEnabled: Optional[bool] = None
+    receiptLogoEnabled: Optional[bool] = None
+    onlineOrdersEnabled: Optional[bool] = None
+    kassirCancelReceipt: Optional[bool] = None
+    kassirGiveDiscount: Optional[bool] = None
+    roomBookingEnabled: Optional[bool] = None
+    waiterCancelOrder: Optional[bool] = None
+    waiterGiveDiscount: Optional[bool] = None
+    kitchenAutoAccept: Optional[bool] = None
+    inventoryLowAlert: Optional[bool] = None
+
+
+# --- Expenses (Xarajatlar) ---
+
+class ExpenseInput(BaseModel):
+    category: str
+    amount: float
+    description: Optional[str] = None
+    date: Optional[str] = None  # ISO date string
+
+
+class ExpenseSchema(BaseModel):
+    id: int
+    venueId: int
+    category: str
+    amount: float
+    description: Optional[str] = None
+    date: datetime
+    createdBy: Optional[int] = None
+    createdAt: datetime
+
+
+class FinanceSummary(BaseModel):
+    totalRevenue: float
+    totalExpenses: float
+    netProfit: float
+    periodLabel: str
+
+
+class FinanceChartPoint(BaseModel):
+    label: str
+    revenue: float
+    expenses: float
+    profit: float
+
+
+# --- Web Push Notifications ---
+
+class PushSubscriptionInput(BaseModel):
+    endpoint: str
+    keys: Dict[str, str]  # {p256dh, auth}
+    userAgent: Optional[str] = None
+
+
+class VapidPublicKeyResponse(BaseModel):
+    publicKey: str
+
+
+# --- Online Orders (Telegram WebApp) ---
+
+class OnlineOrderItem(BaseModel):
+    productId: int
+    name: str
+    quantity: int
+    price: float
+    imageUrl: Optional[str] = None
+
+
+class OnlineOrderInput(BaseModel):
+    customerName: str
+    customerPhone: Optional[str] = None
+    customerAddress: Optional[str] = None
+    telegramUserId: Optional[str] = None
+    deliveryType: Literal["pickup", "delivery"] = "pickup"
+    items: List[OnlineOrderItem]
+    notes: Optional[str] = None
+
+
+class OnlineOrder(BaseModel):
+    id: int
+    venueId: int
+    customerName: str
+    customerPhone: Optional[str] = None
+    customerAddress: Optional[str] = None
+    telegramUserId: Optional[str] = None
+    items: List[OnlineOrderItem]
+    totalAmount: float
+    status: Literal["new", "accepted", "preparing", "ready", "delivering", "delivered", "cancelled"]
+    notes: Optional[str] = None
+    deliveryType: Literal["pickup", "delivery"]
+    acceptedBy: Optional[int] = None
+    acceptedByName: Optional[str] = None
+    courierId: Optional[int] = None
+    courierName: Optional[str] = None
+    createdAt: datetime
+    updatedAt: datetime
+
+
+class OnlineOrderStatusUpdate(BaseModel):
+    status: Literal["new", "accepted", "preparing", "ready", "delivering", "delivered", "cancelled"]
+
+
+# --- Telegram Customers ---
+
+class TelegramCustomer(BaseModel):
+    id: int
+    venueId: int
+    telegramUserId: str
+    telegramUsername: Optional[str] = None
+    firstName: Optional[str] = None
+    lastName: Optional[str] = None
+    phone: Optional[str] = None
+    photoUrl: Optional[str] = None
+    language: str
+    chatId: str
+    isRegistered: bool
+    createdAt: datetime

@@ -11,6 +11,8 @@ export interface VenueUpdate {
   name?: string;
   type?: VenueUpdateType;
   /** @nullable */
+  logoUrl?: string | null;
+  /** @nullable */
   address?: string | null;
   /** @nullable */
   phone?: string | null;

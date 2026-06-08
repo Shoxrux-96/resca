@@ -11,6 +11,7 @@ export interface UserInput {
   username: string;
   password: string;
   name?: string;
+  phone?: string;
   role: UserInputRole;
   /** @nullable */
   venueId?: number | null;

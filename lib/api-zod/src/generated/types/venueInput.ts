@@ -10,6 +10,7 @@ import type { VenueInputType } from './venueInputType';
 export interface VenueInput {
   name: string;
   type: VenueInputType;
+  logoUrl?: string;
   address?: string;
   phone?: string;
   email?: string;

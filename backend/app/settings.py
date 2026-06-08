@@ -12,6 +12,11 @@ class Settings(BaseSettings):
     JWT_EXPIRES_MINUTES: int = 60 * 24 * 7
     CORS_ORIGINS: str = "*"
 
+    # Web Push (VAPID)
+    VAPID_PRIVATE_KEY: str = ""
+    VAPID_PUBLIC_KEY: str = ""
+    VAPID_EMAIL: str = "admin@resca.uz"
+
 
 settings = Settings()
 
