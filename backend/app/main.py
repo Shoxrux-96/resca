@@ -3632,7 +3632,14 @@ async def setup_telegram_webhook(
     })
     if not result.get("ok"):
         detail = result.get("description", str(result))
-        raise HTTPException(status_code=400, detail=f"Telegram: {detail}. PUBLIC_URL HTTPS bo'lishi kerak (masalan: https://resca.uz)")
+        err_code = result.get("error_code", 0)
+        if err_code == 404:
+            hint = " Bot token noto'g'ri yoki bot mavjud emas. @BotFather dan tokenni tekshiring."
+        elif "HTTPS" in detail:
+            hint = " PUBLIC_URL HTTPS bo'lishi kerak (masalan: https://resca.uz)"
+        else:
+            hint = ""
+        raise HTTPException(status_code=400, detail=f"Telegram: {detail}.{hint}")
     return {"ok": True, "webhookUrl": webhook_url, "telegramResponse": result}
 
 

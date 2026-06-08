@@ -24,7 +24,7 @@ services:
       - backend/.env
     environment:
       DATABASE_URL: postgresql+psycopg://restouser:restopass@db:5432/restocrm
-      PUBLIC_URL: "http://localhost:8001"
+      PUBLIC_URL: "https://compliant-compiled-weblog-beef.trycloudflare.com"
     ports:
       - "8001:8000"
     depends_on:
