@@ -3299,6 +3299,29 @@ async def public_create_online_order(
 
 
 @app.get(
+    "/api/public/online-orders/{venueId}/history",
+    response_model=list[schemas.OnlineOrder],
+    tags=["public"],
+)
+async def public_online_order_history(
+    venueId: int,
+    telegram_user_id: str,
+    db: Session = Depends(get_db),
+):
+    """Telegram foydalanuvchining buyurtma tarixi."""
+    orders = db.scalars(
+        select(models.OnlineOrder)
+        .where(
+            models.OnlineOrder.venue_id == venueId,
+            models.OnlineOrder.telegram_user_id == telegram_user_id,
+        )
+        .order_by(models.OnlineOrder.created_at.desc())
+        .limit(50)
+    ).all()
+    return [_online_order_to_schema(db, o) for o in orders]
+
+
+@app.get(
     "/api/venues/{venueId}/online-orders",
     response_model=list[schemas.OnlineOrder],
     tags=["online-orders"],
