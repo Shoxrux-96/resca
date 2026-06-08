@@ -2310,8 +2310,8 @@ async def create_inventory_item(
 
     # Boshlang'ich miqdor > 0 bo'lsa, avtomatik kirim tranzaksiyasi yaratish (xarajatga qo'shilishi uchun)
     if float(item.quantity) > 0 and float(item.cost_price) > 0:
-        # pack_size ga bo'lib, kirim birligida yozish (xarajat hisobi uchun)
-        tx_qty = float(item.quantity)  # allaqachon sotuv birligida
+        pack_size = float(item.pack_size) if item.pack_size and float(item.pack_size) > 0 else 1
+        tx_qty = float(item.quantity) / pack_size  # paket birligiga o'tkazamiz
         db.add(models.InventoryTransaction(
             venue_id=venueId,
             item_id=item.id,
