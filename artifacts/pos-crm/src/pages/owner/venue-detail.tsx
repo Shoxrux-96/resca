@@ -14,10 +14,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { Store, TrendingUp, AlertCircle, Package, ShoppingBag, UserCheck, Phone, Mail, Instagram, Send, Facebook } from "lucide-react";
+import { Store, TrendingUp, AlertCircle, Package, ShoppingBag, UserCheck, Phone, Mail, Instagram, Send, Facebook, MapPin } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
+import L from "leaflet";
+import "leaflet/dist/leaflet.css";
 
 function fmt(n: number) {
   return new Intl.NumberFormat("uz-UZ").format(n) + " so'm";
@@ -44,6 +46,43 @@ export default function OwnerVenueDetail() {
     facebook: "",
     telegramBotToken: "",
   });
+
+  const [mapCoords, setMapCoords] = useState({ lat: 41.311081, lng: 69.240562 });
+  const mapRef = useRef<HTMLDivElement>(null);
+  const leafletRef = useRef<L.Map | null>(null);
+  const markerRef = useRef<L.Marker | null>(null);
+
+  useEffect(() => {
+    if (mapRef.current && !leafletRef.current) {
+      const map = L.map(mapRef.current).setView([mapCoords.lat, mapCoords.lng], 13);
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        attribution: "&copy; OpenStreetMap",
+      }).addTo(map);
+      const marker = L.marker([mapCoords.lat, mapCoords.lng], { draggable: true }).addTo(map);
+      marker.on("dragend", () => {
+        const pos = marker.getLatLng();
+        setMapCoords({ lat: pos.lat, lng: pos.lng });
+      });
+      map.on("click", (e: L.LeafletMouseEvent) => {
+        marker.setLatLng(e.latlng);
+        setMapCoords({ lat: e.latlng.lat, lng: e.latlng.lng });
+      });
+      leafletRef.current = map;
+      markerRef.current = marker;
+    }
+    return () => {
+      leafletRef.current?.remove();
+      leafletRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (venue?.latitude && venue?.longitude && !markerRef.current?.getLatLng().equals([venue.latitude, venue.longitude] as any)) {
+      setMapCoords({ lat: venue.latitude, lng: venue.longitude });
+      leafletRef.current?.setView([venue.latitude, venue.longitude], 13);
+      markerRef.current?.setLatLng([venue.latitude, venue.longitude]);
+    }
+  }, [venue]);
 
   useEffect(() => {
     if (venue) {
@@ -92,10 +131,22 @@ export default function OwnerVenueDetail() {
         onSuccess: () => {
           qc.invalidateQueries({ queryKey: getGetVenueQueryKey(id) });
           toast({ title: "Aloqa ma'lumotlari saqlandi" });
-          // Bot token saqlangach, avtomatik webhook o'rnatish
           if (contactForm.telegramBotToken) {
             setupWebhook();
           }
+        },
+        onError: () => toast({ title: "Xatolik", variant: "destructive" }),
+      }
+    );
+  };
+
+  const handleSaveCoords = () => {
+    updateVenue.mutate(
+      { id, data: { latitude: mapCoords.lat, longitude: mapCoords.lng } },
+      {
+        onSuccess: () => {
+          qc.invalidateQueries({ queryKey: getGetVenueQueryKey(id) });
+          toast({ title: "📍 Joylashuv saqlandi" });
         },
         onError: () => toast({ title: "Xatolik", variant: "destructive" }),
       }
@@ -190,6 +241,28 @@ export default function OwnerVenueDetail() {
           </Card>
         </div>
       )}
+
+      {/* ─── Venue Location Map ─── */}
+      <Card className="bg-card border-border">
+        <CardHeader className="flex flex-row items-center gap-2">
+          <MapPin className="h-5 w-5 text-green-500" />
+          <div>
+            <CardTitle className="text-foreground">Filial joylashuvi</CardTitle>
+            <p className="text-xs text-muted-foreground mt-0.5">Xaritada korxonani belgilang va saqlang</p>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div ref={mapRef} className="w-full h-48 rounded-xl overflow-hidden border border-border mb-3" />
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-xs text-muted-foreground">
+              Kenglik: {mapCoords.lat.toFixed(5)}, Uzunlik: {mapCoords.lng.toFixed(5)}
+            </p>
+            <Button size="sm" onClick={handleSaveCoords} disabled={updateVenue.isPending} className="bg-green-600 hover:bg-green-700 shrink-0">
+              {updateVenue.isPending ? "..." : "Saqlash"}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
 
       {/* ─── Contact Info Form ─── */}
       <Card className="bg-card border-border">

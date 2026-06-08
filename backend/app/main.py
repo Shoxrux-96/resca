@@ -93,6 +93,11 @@ def _ensure_schema_migrations() -> None:
         models.PushSubscription.__table__.create(bind=engine, checkfirst=True)
     if "online_orders" not in existing_tables:
         models.OnlineOrder.__table__.create(bind=engine, checkfirst=True)
+    else:
+        oo_cols = {col["name"] for col in inspector.get_columns("online_orders")}
+        if "telegram_username" not in oo_cols:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE online_orders ADD COLUMN telegram_username TEXT"))
     if "telegram_customers" not in existing_tables:
         models.TelegramCustomer.__table__.create(bind=engine, checkfirst=True)
     # Venue ga telegram_bot_token ustuni
@@ -265,7 +270,7 @@ def _venue_to_schema(db: Session, v: models.Venue) -> schemas.Venue:
     return schemas.Venue(
         id=v.id,
         name=v.name,
-        type=v.type,  # type: ignore[arg-type]
+        type=v.type,
         logoUrl=v.logo_url,
         address=v.address,
         phone=v.phone,
@@ -274,6 +279,8 @@ def _venue_to_schema(db: Session, v: models.Venue) -> schemas.Venue:
         telegram=v.telegram,
         facebook=v.facebook,
         telegramBotToken=v.telegram_bot_token,
+        latitude=float(v.latitude) if v.latitude is not None else None,
+        longitude=float(v.longitude) if v.longitude is not None else None,
         adminId=v.admin_id,
         adminName=admin_name,
         createdAt=v.created_at,
@@ -3241,11 +3248,14 @@ def _online_order_to_schema(db: Session, o: models.OnlineOrder) -> schemas.Onlin
         customerPhone=o.customer_phone,
         customerAddress=o.customer_address,
         telegramUserId=o.telegram_user_id,
+        telegramUsername=o.telegram_username,
         items=[schemas.OnlineOrderItem(**it) for it in items],
         totalAmount=float(o.total_amount),
         status=o.status,  # type: ignore[arg-type]
         notes=o.notes,
         deliveryType=o.delivery_type,  # type: ignore[arg-type]
+        latitude=float(o.latitude) if o.latitude is not None else None,
+        longitude=float(o.longitude) if o.longitude is not None else None,
         acceptedBy=o.accepted_by,
         acceptedByName=accepted_name,
         courierId=o.courier_id,
@@ -3289,17 +3299,34 @@ async def public_create_online_order(
             "imageUrl": product.image_url,
         })
 
+    # TelegramCustomer dan telefon va username ni olish
+    tg_username = payload.telegramUsername
+    tg_phone = payload.customerPhone
+    if payload.telegramUserId:
+        tc = db.query(models.TelegramCustomer).filter(
+            models.TelegramCustomer.venue_id == venueId,
+            models.TelegramCustomer.telegram_user_id == payload.telegramUserId,
+        ).first()
+        if tc:
+            if not tg_phone and tc.phone:
+                tg_phone = tc.phone
+            if not tg_username:
+                tg_username = tc.telegram_username
+
     o = models.OnlineOrder(
         venue_id=venueId,
         customer_name=payload.customerName,
-        customer_phone=payload.customerPhone,
+        customer_phone=tg_phone,
         customer_address=payload.customerAddress,
         telegram_user_id=payload.telegramUserId,
+        telegram_username=tg_username,
         items_json=json.dumps(items_data),
         total_amount=total,
         status="new",
         notes=payload.notes,
         delivery_type=payload.deliveryType,
+        latitude=payload.latitude,
+        longitude=payload.longitude,
     )
     db.add(o)
     db.flush()

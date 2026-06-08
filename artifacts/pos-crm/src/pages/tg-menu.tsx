@@ -1,5 +1,7 @@
-import { useEffect, useState, useMemo } from "react";
-import { ShoppingCart, Plus, Minus, X, Search, Send, Clock, Menu } from "lucide-react";
+import { useEffect, useState, useMemo, useRef } from "react";
+import { ShoppingCart, Plus, Minus, X, Search, Send, Clock, Menu, MapPin, Navigation } from "lucide-react";
+import L from "leaflet";
+import "leaflet/dist/leaflet.css";
 
 declare global {
   interface Window {
@@ -80,7 +82,12 @@ export default function TelegramMenu() {
   const [cart, setCart] = useState<CartItem[]>([]);
   const [tab, setTab] = useState<"menu" | "cart" | "history">("menu");
   const [submitOpen, setSubmitOpen] = useState(false);
-  const [form, setForm] = useState({ name: "", phone: "", address: "", deliveryType: "pickup" as "pickup" | "delivery", notes: "" });
+  const [form, setForm] = useState({ name: "", address: "", deliveryType: "pickup" as "pickup" | "delivery", notes: "", lat: null as number | null, lng: null as number | null });
+  const mapRef = useRef<HTMLDivElement>(null);
+  const leafletRef = useRef<L.Map | null>(null);
+  const markerRef = useRef<L.Marker | null>(null);
+  const venueMapRef = useRef<HTMLDivElement>(null);
+  const venueLeafletRef = useRef<L.Map | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState<number | null>(null);
   const [orders, setOrders] = useState<Order[]>([]);
@@ -125,6 +132,74 @@ export default function TelegramMenu() {
       })
       .finally(() => setLoading(false));
   }, [venueId]);
+
+  // Map for delivery location
+  useEffect(() => {
+    if (form.deliveryType !== "delivery") {
+      leafletRef.current?.remove();
+      leafletRef.current = null;
+      markerRef.current = null;
+      return;
+    }
+    // Kichik kechikish bilan map yaratamiz (DOM render bo'lishi uchun)
+    const timer = setTimeout(() => {
+      if (!mapRef.current || leafletRef.current) return;
+      const map = L.map(mapRef.current).setView([41.311081, 69.240562], 13);
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        attribution: "&copy; OpenStreetMap",
+      }).addTo(map);
+      const marker = L.marker([41.311081, 69.240562], { draggable: true }).addTo(map);
+      marker.on("dragend", () => {
+        const pos = marker.getLatLng();
+        setForm((f) => ({ ...f, lat: pos.lat, lng: pos.lng }));
+      });
+      map.on("click", (e: L.LeafletMouseEvent) => {
+        marker.setLatLng(e.latlng);
+        setForm((f) => ({ ...f, lat: e.latlng.lat, lng: e.latlng.lng }));
+      });
+      // Joriy lokatsiyani avtomatik aniqlash
+      if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+          (pos) => {
+            const { latitude, longitude } = pos.coords;
+            map.setView([latitude, longitude], 15);
+            marker.setLatLng([latitude, longitude]);
+            setForm((f) => ({ ...f, lat: latitude, lng: longitude }));
+          },
+          () => {}, // ruxsat bermasa — sukut bo'yicha
+          { enableHighAccuracy: true, timeout: 10000 }
+        );
+      }
+      leafletRef.current = map;
+      markerRef.current = marker;
+    }, 100);
+    return () => {
+      clearTimeout(timer);
+      leafletRef.current?.remove();
+      leafletRef.current = null;
+      markerRef.current = null;
+    };
+  }, [form.deliveryType]);
+
+  // Venue location map
+  useEffect(() => {
+    if (!data?.venue?.latitude || !data?.venue?.longitude || !venueMapRef.current) return;
+    // Clean up previous instance
+    if (venueLeafletRef.current) {
+      venueLeafletRef.current.remove();
+      venueLeafletRef.current = null;
+    }
+    const map = L.map(venueMapRef.current).setView([data.venue.latitude, data.venue.longitude], 15);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      attribution: "&copy; OpenStreetMap",
+    }).addTo(map);
+    L.marker([data.venue.latitude, data.venue.longitude]).addTo(map);
+    venueLeafletRef.current = map;
+    return () => {
+      venueLeafletRef.current?.remove();
+      venueLeafletRef.current = null;
+    };
+  }, [data, data?.venue?.latitude, data?.venue?.longitude, tab]);
 
   // Load history when tab changes to history
   useEffect(() => {
@@ -181,9 +256,11 @@ export default function TelegramMenu() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           customerName: form.name.trim(),
-          customerPhone: form.phone.trim() || null,
           customerAddress: form.deliveryType === "delivery" ? form.address.trim() : null,
+          latitude: form.deliveryType === "delivery" ? form.lat : null,
+          longitude: form.deliveryType === "delivery" ? form.lng : null,
           telegramUserId: tgUserId,
+          telegramUsername: tg?.initDataUnsafe?.user?.username || null,
           deliveryType: form.deliveryType,
           notes: form.notes.trim() || null,
           items: cart.map((c) => ({
@@ -240,6 +317,13 @@ export default function TelegramMenu() {
       <div className="bg-white dark:bg-zinc-900 border-b border-zinc-200 dark:border-zinc-800 px-4 py-3 sticky top-0 z-10">
         <h1 className="text-lg font-bold text-zinc-900 dark:text-zinc-100">{data.venue.name}</h1>
         {data.venue.address && <p className="text-xs text-zinc-500 dark:text-zinc-400">{data.venue.address}</p>}
+        {data.venue.latitude && data.venue.longitude ? (
+          <div ref={venueMapRef} className="w-full h-28 rounded-lg overflow-hidden border border-zinc-200 dark:border-zinc-700 mt-2" />
+        ) : (
+          <div className="flex items-center gap-1.5 mt-2 text-xs text-zinc-400">
+            <MapPin className="h-3 w-3" /> Xaritada joylashuv mavjud emas
+          </div>
+        )}
       </div>
 
       {/* Menu tab */}
@@ -474,16 +558,6 @@ export default function TelegramMenu() {
                 />
               </div>
               <div>
-                <label className="text-xs text-zinc-600 dark:text-zinc-400">Telefon</label>
-                <input
-                  type="tel"
-                  value={form.phone}
-                  onChange={(e) => setForm({ ...form, phone: e.target.value })}
-                  className="w-full h-10 px-3 mt-1 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg text-sm"
-                  placeholder="+998 90 123 45 67"
-                />
-              </div>
-              <div>
                 <label className="text-xs text-zinc-600 dark:text-zinc-400">Olib ketish turi</label>
                 <div className="grid grid-cols-2 gap-2 mt-1">
                   <button
@@ -502,6 +576,11 @@ export default function TelegramMenu() {
               </div>
               {form.deliveryType === "delivery" && (
                 <div>
+                  <div className="flex items-center gap-2 mb-1.5">
+                    <Navigation className="h-3.5 w-3.5 text-blue-500" />
+                    <label className="text-xs text-zinc-600 dark:text-zinc-400">Xaritada belgilang</label>
+                  </div>
+                  <div ref={mapRef} className="w-full h-44 rounded-lg overflow-hidden border border-zinc-300 dark:border-zinc-700 mb-2" />
                   <label className="text-xs text-zinc-600 dark:text-zinc-400">Manzil *</label>
                   <input
                     type="text"
@@ -510,6 +589,11 @@ export default function TelegramMenu() {
                     className="w-full h-10 px-3 mt-1 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg text-sm"
                     placeholder="Ko'cha, uy raqami"
                   />
+                  {form.lat && form.lng && (
+                    <p className="text-[10px] text-zinc-400 mt-1">
+                      Lokatsiya: {form.lat.toFixed(5)}, {form.lng.toFixed(5)}
+                    </p>
+                  )}
                 </div>
               )}
               <div>

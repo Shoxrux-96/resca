@@ -51,6 +51,8 @@ class Venue(Base):
     telegram: Mapped[str | None] = mapped_column(Text, nullable=True)
     facebook: Mapped[str | None] = mapped_column(Text, nullable=True)
     telegram_bot_token: Mapped[str | None] = mapped_column("telegram_bot_token", Text, nullable=True)
+    latitude: Mapped[float | None] = mapped_column("latitude", Numeric(10, 7), nullable=True)
+    longitude: Mapped[float | None] = mapped_column("longitude", Numeric(10, 7), nullable=True)
     admin_id: Mapped[int | None] = mapped_column("admin_id", Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         "created_at",
@@ -369,11 +371,14 @@ class OnlineOrder(Base):
     customer_phone: Mapped[str | None] = mapped_column("customer_phone", Text, nullable=True)
     customer_address: Mapped[str | None] = mapped_column("customer_address", Text, nullable=True)
     telegram_user_id: Mapped[str | None] = mapped_column("telegram_user_id", Text, nullable=True)
+    telegram_username: Mapped[str | None] = mapped_column("telegram_username", Text, nullable=True)
     items_json: Mapped[str] = mapped_column("items_json", Text, nullable=False)  # [{productId,name,quantity,price}]
     total_amount: Mapped[float] = mapped_column("total_amount", Numeric(12, 2), nullable=False)
     status: Mapped[str] = mapped_column(String, nullable=False, default="new")  # new|accepted|preparing|ready|delivering|delivered|cancelled
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     delivery_type: Mapped[str] = mapped_column(String, nullable=False, default="pickup")  # pickup|delivery
+    latitude: Mapped[float | None] = mapped_column("latitude", Numeric(10, 7), nullable=True)
+    longitude: Mapped[float | None] = mapped_column("longitude", Numeric(10, 7), nullable=True)
     accepted_by: Mapped[int | None] = mapped_column("accepted_by", Integer, nullable=True)  # kassir/oshpaz user_id
     courier_id: Mapped[int | None] = mapped_column("courier_id", Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(

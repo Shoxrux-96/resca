@@ -68,6 +68,8 @@ class VenueBase(BaseModel):
     telegram: Optional[str] = None
     facebook: Optional[str] = None
     telegramBotToken: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
 
 
 class VenueInput(VenueBase):
@@ -85,6 +87,8 @@ class VenueUpdate(BaseModel):
     telegram: Optional[str] = None
     facebook: Optional[str] = None
     telegramBotToken: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
 
 
 class Venue(VenueBase):
@@ -620,7 +624,10 @@ class OnlineOrderInput(BaseModel):
     customerPhone: Optional[str] = None
     customerAddress: Optional[str] = None
     telegramUserId: Optional[str] = None
+    telegramUsername: Optional[str] = None
     deliveryType: Literal["pickup", "delivery"] = "pickup"
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
     items: List[OnlineOrderItem]
     notes: Optional[str] = None
 
@@ -632,11 +639,14 @@ class OnlineOrder(BaseModel):
     customerPhone: Optional[str] = None
     customerAddress: Optional[str] = None
     telegramUserId: Optional[str] = None
+    telegramUsername: Optional[str] = None
     items: List[OnlineOrderItem]
     totalAmount: float
     status: Literal["new", "accepted", "preparing", "ready", "delivering", "delivered", "cancelled"]
     notes: Optional[str] = None
     deliveryType: Literal["pickup", "delivery"]
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
     acceptedBy: Optional[int] = None
     acceptedByName: Optional[str] = None
     courierId: Optional[int] = None
