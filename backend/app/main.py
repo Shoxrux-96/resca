@@ -3631,7 +3631,8 @@ async def setup_telegram_webhook(
         "allowed_updates": ["message", "callback_query"],
     })
     if not result.get("ok"):
-        raise HTTPException(status_code=500, detail=f"Webhook o'rnatilmadi: {result}")
+        detail = result.get("description", str(result))
+        raise HTTPException(status_code=400, detail=f"Telegram: {detail}. PUBLIC_URL HTTPS bo'lishi kerak (masalan: https://resca.uz)")
     return {"ok": True, "webhookUrl": webhook_url, "telegramResponse": result}
 
 

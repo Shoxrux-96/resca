@@ -113,8 +113,16 @@ export default function OwnerVenueDetail() {
       if (!r.ok) throw new Error(d?.detail || "Xatolik");
       toast({ title: "✅ Bot webhook o'rnatildi", description: d.webhookUrl });
     } catch (e: any) {
-      toast({ title: "Xatolik", description: e.message, variant: "destructive" });
-    }
+      const msg = e.message || "";
+      if (msg.includes("HTTPS")) {
+        toast({
+          title: "Bot webhook o'rnatilmadi",
+          description: "Telegram webhook uchun HTTPS talab qilinadi. Loyihani serverga deploy qiling yoki ngrok ishlating.",
+          variant: "destructive",
+        });
+      } else {
+        toast({ title: "Xatolik", description: msg, variant: "destructive" });
+      }
   };
 
   if (isLoading) return <div className="text-muted-foreground">Yuklanmoqda...</div>;
