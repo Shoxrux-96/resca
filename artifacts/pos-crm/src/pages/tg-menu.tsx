@@ -82,7 +82,7 @@ export default function TelegramMenu() {
   const [cart, setCart] = useState<CartItem[]>([]);
   const [tab, setTab] = useState<"menu" | "cart" | "history">("menu");
   const [submitOpen, setSubmitOpen] = useState(false);
-  const [form, setForm] = useState({ name: "", address: "", deliveryType: "pickup" as "pickup" | "delivery", notes: "", lat: null as number | null, lng: null as number | null });
+  const [form, setForm] = useState({ name: "", deliveryType: "pickup" as "pickup" | "delivery", lat: null as number | null, lng: null as number | null });
   const mapRef = useRef<HTMLDivElement>(null);
   const leafletRef = useRef<L.Map | null>(null);
   const markerRef = useRef<L.Marker | null>(null);
@@ -141,14 +141,40 @@ export default function TelegramMenu() {
       markerRef.current = null;
       return;
     }
-    // Kichik kechikish bilan map yaratamiz (DOM render bo'lishi uchun)
     const timer = setTimeout(() => {
       if (!mapRef.current || leafletRef.current) return;
-      const map = L.map(mapRef.current).setView([41.311081, 69.240562], 13);
-      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+
+      const osm = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
         attribution: "&copy; OpenStreetMap",
+        maxZoom: 19,
+      });
+      const sat = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", {
+        attribution: "&copy; Esri",
+        maxZoom: 19,
+      });
+      const satLabel = L.tileLayer("https://{s}.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}", {
+        attribution: "&copy; Esri",
+        maxZoom: 19,
+      });
+
+      const map = L.map(mapRef.current, {
+        layers: [osm],
+        zoomControl: true,
+        attributionControl: true,
+      }).setView([41.311081, 69.240562], 13);
+
+      // Layer control — Street / Satellite
+      const baseMaps = {
+        "Ko'cha": osm,
+        "Sun'iy yo'ldosh": L.layerGroup([sat, satLabel]),
+      };
+      L.control.layers(baseMaps, null, { position: "bottomleft" }).addTo(map);
+
+      // Marker (draggable + crosshair cursor)
+      const marker = L.marker([41.311081, 69.240562], {
+        draggable: true,
+        autoPan: true,
       }).addTo(map);
-      const marker = L.marker([41.311081, 69.240562], { draggable: true }).addTo(map);
       marker.on("dragend", () => {
         const pos = marker.getLatLng();
         setForm((f) => ({ ...f, lat: pos.lat, lng: pos.lng }));
@@ -157,24 +183,51 @@ export default function TelegramMenu() {
         marker.setLatLng(e.latlng);
         setForm((f) => ({ ...f, lat: e.latlng.lat, lng: e.latlng.lng }));
       });
+
       // Joriy lokatsiyani avtomatik aniqlash
+      let located = false;
       if (navigator.geolocation) {
         navigator.geolocation.getCurrentPosition(
           (pos) => {
             const { latitude, longitude } = pos.coords;
-            map.setView([latitude, longitude], 15);
+            map.setView([latitude, longitude], 16);
             marker.setLatLng([latitude, longitude]);
             setForm((f) => ({ ...f, lat: latitude, lng: longitude }));
+            located = true;
           },
-          () => {}, // ruxsat bermasa — sukut bo'yicha
+          () => {},
           { enableHighAccuracy: true, timeout: 10000 }
         );
       }
+
+      // "Mening joylashuvim" tugmasi (xarita yuklangandan keyin 3 soniyagacha kutadi)
+      const locateBtn = L.control({ position: "topright" });
+      locateBtn.onAdd = () => {
+        const btn = L.DomUtil.create("button", "leaflet-bar leaflet-control");
+        btn.innerHTML = "📍";
+        btn.title = "Mening joylashuvim";
+        btn.style.cssText = "width:34px;height:34px;font-size:18px;cursor:pointer;background:white;border:2px solid rgba(0,0,0,.2);border-radius:4px;display:flex;align-items:center;justify-content:center;line-height:1;";
+        btn.onclick = () => {
+          if (!navigator.geolocation) return;
+          navigator.geolocation.getCurrentPosition(
+            (pos) => {
+              const { latitude, longitude } = pos.coords;
+              map.setView([latitude, longitude], 17);
+              marker.setLatLng([latitude, longitude]);
+              setForm((f) => ({ ...f, lat: latitude, lng: longitude }));
+            },
+            () => alert("Lokatsiyani aniqlab bo'lmadi"),
+            { enableHighAccuracy: true, timeout: 10000 }
+          );
+        };
+        return btn;
+      };
+      locateBtn.addTo(map);
+
       leafletRef.current = map;
       markerRef.current = marker;
-    }, 100);
+    }, 200);
     return () => {
-      clearTimeout(timer);
       leafletRef.current?.remove();
       leafletRef.current = null;
       markerRef.current = null;
@@ -247,7 +300,6 @@ export default function TelegramMenu() {
 
   const handleSubmit = async () => {
     if (!form.name.trim()) { alert("Ismingizni kiriting"); return; }
-    if (form.deliveryType === "delivery" && !form.address.trim()) { alert("Manzilni kiriting"); return; }
     if (cart.length === 0) { alert("Savat bo'sh"); return; }
     setSubmitting(true);
     try {
@@ -256,13 +308,12 @@ export default function TelegramMenu() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           customerName: form.name.trim(),
-          customerAddress: form.deliveryType === "delivery" ? form.address.trim() : null,
+          customerAddress: form.lat && form.lng ? `${form.lat.toFixed(6)}, ${form.lng.toFixed(6)}` : null,
           latitude: form.deliveryType === "delivery" ? form.lat : null,
           longitude: form.deliveryType === "delivery" ? form.lng : null,
           telegramUserId: tgUserId,
           telegramUsername: tg?.initDataUnsafe?.user?.username || null,
           deliveryType: form.deliveryType,
-          notes: form.notes.trim() || null,
           items: cart.map((c) => ({
             productId: c.product.id,
             name: c.product.name,
@@ -577,35 +628,17 @@ export default function TelegramMenu() {
               {form.deliveryType === "delivery" && (
                 <div>
                   <div className="flex items-center gap-2 mb-1.5">
-                    <Navigation className="h-3.5 w-3.5 text-blue-500" />
-                    <label className="text-xs text-zinc-600 dark:text-zinc-400">Xaritada belgilang</label>
+                    <Navigation className="h-4 w-4 text-blue-500" />
+                    <label className="text-xs text-zinc-600 dark:text-zinc-400">Xaritada joylashuvingizni belgilang</label>
                   </div>
-                  <div ref={mapRef} className="w-full h-44 rounded-lg overflow-hidden border border-zinc-300 dark:border-zinc-700 mb-2" />
-                  <label className="text-xs text-zinc-600 dark:text-zinc-400">Manzil *</label>
-                  <input
-                    type="text"
-                    value={form.address}
-                    onChange={(e) => setForm({ ...form, address: e.target.value })}
-                    className="w-full h-10 px-3 mt-1 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg text-sm"
-                    placeholder="Ko'cha, uy raqami"
-                  />
+                  <div ref={mapRef} className="w-full h-72 sm:h-80 rounded-xl overflow-hidden border border-zinc-300 dark:border-zinc-700 shadow-inner" />
                   {form.lat && form.lng && (
-                    <p className="text-[10px] text-zinc-400 mt-1">
-                      Lokatsiya: {form.lat.toFixed(5)}, {form.lng.toFixed(5)}
+                    <p className="text-[10px] text-zinc-400 mt-1.5 flex items-center gap-1">
+                      <MapPin className="h-3 w-3" /> {form.lat.toFixed(6)}, {form.lng.toFixed(6)}
                     </p>
                   )}
                 </div>
               )}
-              <div>
-                <label className="text-xs text-zinc-600 dark:text-zinc-400">Izoh (ixtiyoriy)</label>
-                <input
-                  type="text"
-                  value={form.notes}
-                  onChange={(e) => setForm({ ...form, notes: e.target.value })}
-                  className="w-full h-10 px-3 mt-1 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg text-sm"
-                  placeholder="Qo'shimcha xohish..."
-                />
-              </div>
 
               <div className="bg-zinc-50 dark:bg-zinc-800/50 rounded-xl p-3 mt-4">
                 <div className="flex items-center justify-between">
