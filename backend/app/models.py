@@ -381,6 +381,7 @@ class OnlineOrder(Base):
     longitude: Mapped[float | None] = mapped_column("longitude", Numeric(10, 7), nullable=True)
     accepted_by: Mapped[int | None] = mapped_column("accepted_by", Integer, nullable=True)  # kassir/oshpaz user_id
     courier_id: Mapped[int | None] = mapped_column("courier_id", Integer, nullable=True)
+    pos_order_id: Mapped[int | None] = mapped_column("pos_order_id", Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         "created_at",
         DateTime(timezone=True),

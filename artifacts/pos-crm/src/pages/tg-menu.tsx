@@ -50,6 +50,27 @@ type Order = {
   items: OrderItem[];
   deliveryType: string;
   createdAt: string;
+  posOrderId: number | null;
+};
+
+type ReceiptItem = {
+  productId: number;
+  productName: string;
+  quantity: number;
+  unitPrice: number;
+  discountPct: number;
+  total: number;
+};
+
+type ReceiptDetail = {
+  id: number;
+  venueId: number;
+  totalAmount: number;
+  paymentType: string;
+  status: string;
+  notes: string | null;
+  items: ReceiptItem[];
+  createdAt: string;
 };
 
 const STATUS_LABELS: Record<string, string> = {
@@ -95,6 +116,9 @@ export default function TelegramMenu() {
   const [submitted, setSubmitted] = useState<number | null>(null);
   const [orders, setOrders] = useState<Order[]>([]);
   const [ordersLoading, setOrdersLoading] = useState(false);
+  const [receiptOrder, setReceiptOrder] = useState<Order | null>(null);
+  const [receiptDetail, setReceiptDetail] = useState<any>(null);
+  const [receiptLoading, setReceiptLoading] = useState(false);
 
   // URL: /tg-menu/<venueId>
   const venueId = (() => {
@@ -300,6 +324,26 @@ export default function TelegramMenu() {
 
   const cartTotal = cart.reduce((s, i) => s + i.product.price * i.quantity, 0);
   const cartCount = cart.reduce((s, i) => s + i.quantity, 0);
+
+  const fetchReceipt = async (o: Order) => {
+    if (!o.posOrderId || !data?.venue?.id) return;
+    setReceiptOrder(o);
+    setReceiptLoading(true);
+    setReceiptDetail(null);
+    try {
+      const r = await fetch(`/api/venues/${data.venue.id}/orders/${o.posOrderId}`);
+      if (r.ok) {
+        const detail = await r.json();
+        setReceiptDetail(detail);
+      }
+    } catch {}
+    setReceiptLoading(false);
+  };
+
+  const closeReceipt = () => {
+    setReceiptOrder(null);
+    setReceiptDetail(null);
+  };
 
   const handleSubmit = async () => {
     if (!form.name.trim()) { alert("Ismingizni kiriting"); return; }
@@ -561,7 +605,17 @@ export default function TelegramMenu() {
                     </div>
                   )}
                   <div className="px-4 py-2.5 border-t border-zinc-200 dark:border-zinc-800 flex items-center justify-between">
-                    <span className="text-xs text-zinc-500">Jami</span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-zinc-500">Jami</span>
+                      {o.posOrderId && (
+                        <button
+                          onClick={() => fetchReceipt(o)}
+                          className="text-[11px] px-2 py-0.5 rounded bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 font-medium"
+                        >
+                          🧾 Chek
+                        </button>
+                      )}
+                    </div>
                     <span className="text-sm font-bold text-blue-600 dark:text-blue-400">{fmt(o.totalAmount)} so'm</span>
                   </div>
                 </div>
@@ -608,6 +662,61 @@ export default function TelegramMenu() {
           </button>
         </div>
       </div>
+
+      {/* Receipt Modal */}
+      {receiptOrder && (
+        <div className="fixed inset-0 bg-black/60 z-30 flex items-end" onClick={closeReceipt}>
+          <div className="bg-white dark:bg-zinc-900 w-full max-h-[90vh] rounded-t-3xl overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="px-4 py-3 border-b border-zinc-200 dark:border-zinc-800 flex items-center justify-between">
+              <h2 className="text-lg font-bold text-zinc-900 dark:text-zinc-100">🧾 Chek #{receiptOrder.id}</h2>
+              <button onClick={closeReceipt} className="p-2 -mr-2"><X className="h-5 w-5" /></button>
+            </div>
+            {receiptLoading ? (
+              <div className="p-8 text-center text-zinc-500 text-sm">Yuklanmoqda...</div>
+            ) : receiptDetail ? (
+              <div className="p-4">
+                {/* Receipt header */}
+                <div className="text-center mb-4 border-b border-dashed border-zinc-300 dark:border-zinc-700 pb-3">
+                  <p className="text-sm font-bold text-zinc-900 dark:text-zinc-100">{data?.venue?.name || ""}</p>
+                  <p className="text-[11px] text-zinc-500 mt-0.5">
+                    Chek №{receiptDetail.id} &middot;{" "}
+                    {new Date(receiptDetail.createdAt).toLocaleString("uz-UZ", {
+                      day: "2-digit", month: "2-digit", year: "numeric",
+                      hour: "2-digit", minute: "2-digit",
+                    })}
+                  </p>
+                  <p className="text-[11px] text-zinc-500">{receiptOrder.customerName}</p>
+                </div>
+                {/* Items */}
+                <div className="space-y-1.5 mb-4">
+                  <div className="flex justify-between text-[10px] text-zinc-400 uppercase font-semibold pb-1 border-b border-zinc-200 dark:border-zinc-800">
+                    <span>Mahsulot</span>
+                    <span>Miqdor Narxi Summa</span>
+                  </div>
+                  {receiptDetail.items.map((it: any, i: number) => (
+                    <div key={i} className="flex justify-between text-xs">
+                      <span className="text-zinc-800 dark:text-zinc-200 truncate mr-2">{it.productName}</span>
+                      <span className="text-zinc-600 dark:text-zinc-400 shrink-0 text-right">
+                        {it.quantity} × {fmt(it.unitPrice)} = {fmt(it.total)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+                {/* Total */}
+                <div className="border-t border-dashed border-zinc-300 dark:border-zinc-700 pt-2 flex justify-between items-center">
+                  <span className="text-sm font-bold text-zinc-900 dark:text-zinc-100">JAMI</span>
+                  <span className="text-base font-bold text-blue-600 dark:text-blue-400">{fmt(receiptDetail.totalAmount)} so'm</span>
+                </div>
+                <p className="text-[10px] text-zinc-400 text-center mt-4 border-t border-dashed border-zinc-300 dark:border-zinc-700 pt-3">
+                  {receiptDetail.paymentType === "cash" ? "Naqt to'lov" : receiptDetail.paymentType}
+                </p>
+              </div>
+            ) : (
+              <div className="p-8 text-center text-zinc-500 text-sm">Chek topilmadi</div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Submit Modal */}
       {submitOpen && (

@@ -98,6 +98,9 @@ def _ensure_schema_migrations() -> None:
         if "telegram_username" not in oo_cols:
             with engine.begin() as conn:
                 conn.execute(text("ALTER TABLE online_orders ADD COLUMN telegram_username TEXT"))
+        if "pos_order_id" not in oo_cols:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE online_orders ADD COLUMN pos_order_id INTEGER"))
     if "telegram_customers" not in existing_tables:
         models.TelegramCustomer.__table__.create(bind=engine, checkfirst=True)
     # Venue ga telegram_bot_token ustuni
@@ -3260,6 +3263,7 @@ def _online_order_to_schema(db: Session, o: models.OnlineOrder) -> schemas.Onlin
         acceptedByName=accepted_name,
         courierId=o.courier_id,
         courierName=courier_name,
+        posOrderId=o.pos_order_id,
         createdAt=o.created_at,
         updatedAt=o.updated_at,
     )
@@ -3389,6 +3393,51 @@ async def list_online_orders(
     return [_online_order_to_schema(db, o) for o in orders]
 
 
+def _create_pos_order_from_online_order(db: Session, venue_id: int, oo: models.OnlineOrder) -> int | None:
+    """Onlayn buyurtma qabul qilinganda POS order yaratadi va stock kamaytiradi."""
+    try:
+        items_data = json.loads(oo.items_json or "[]")
+    except Exception:
+        items_data = []
+    if not items_data:
+        return None
+
+    total_amount = float(oo.total_amount)
+    order = models.Order(
+        venue_id=venue_id,
+        customer_id=None,
+        waiter_id=oo.accepted_by,
+        total_amount=total_amount,
+        payment_type="cash",
+        status="completed",
+        notes=f"Onlayn buyurtma #{oo.id} — {oo.customer_name}",
+    )
+    db.add(order)
+    db.flush()
+
+    for item in items_data:
+        db.add(models.OrderItem(
+            order_id=order.id,
+            product_id=item.get("productId", 0),
+            product_name=item.get("name", ""),
+            quantity=item.get("quantity", 0),
+            unit_price=item.get("price", 0),
+            discount_pct=0,
+            total=float(item.get("price", 0)) * int(item.get("quantity", 0)),
+        ))
+
+    db.flush()
+    db.refresh(order)
+
+    # Stock kamaytirish
+    order_items = db.scalars(
+        select(models.OrderItem).where(models.OrderItem.order_id == order.id)
+    ).all()
+    _deduct_inventory_on_sale(db, venue_id, order_items)
+
+    return order.id
+
+
 @app.patch(
     "/api/venues/{venueId}/online-orders/{orderId}/status",
     response_model=schemas.OnlineOrder,
@@ -3413,6 +3462,11 @@ async def update_online_order_status(
     # Birinchi qabul qilgan kassir/oshpaz/mangalchi ni belgilash
     if new_status == "accepted" and o.accepted_by is None:
         o.accepted_by = current_user.id
+        # POS buyurtma yaratish (kassada sotuv) va stock kamaytirish
+        if o.pos_order_id is None:
+            pos_order_id = _create_pos_order_from_online_order(db, venueId, o)
+            if pos_order_id is not None:
+                o.pos_order_id = pos_order_id
     if new_status == "delivering" and role == "dastavkachi" and o.courier_id is None:
         o.courier_id = current_user.id
 

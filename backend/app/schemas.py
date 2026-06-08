@@ -651,6 +651,7 @@ class OnlineOrder(BaseModel):
     acceptedByName: Optional[str] = None
     courierId: Optional[int] = None
     courierName: Optional[str] = None
+    posOrderId: Optional[int] = None
     createdAt: datetime
     updatedAt: datetime
 
