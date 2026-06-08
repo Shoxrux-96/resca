@@ -2704,7 +2704,7 @@ async def get_finance_summary(
         item = db.get(models.InventoryItem, tx.item_id)
         if item:
             pack_size = float(item.pack_size) if item.pack_size and float(item.pack_size) > 0 else 1
-            product_expenses += (float(tx.quantity) / pack_size) * float(item.cost_price)
+            product_expenses += float(tx.quantity) * pack_size * float(item.cost_price)
     expenses = manual_expenses + product_expenses
     return schemas.FinanceSummary(
         totalRevenue=revenue, totalExpenses=expenses,
@@ -2828,16 +2828,14 @@ async def get_product_expenses(
         item = db.get(models.InventoryItem, tx.item_id)
         if item:
             pack_size = float(item.pack_size) if item.pack_size and float(item.pack_size) > 0 else 1
-            # Xarajat = kirim birligi miqdori × tan narx
-            # tx.quantity sotuv birligida saqlangan, pack_size ga bo'lib kirim birligiga qaytaramiz
-            qty_in_pack_units = float(tx.quantity) / pack_size
-            cost = qty_in_pack_units * float(item.cost_price)
+            qty_in_sales_units = float(tx.quantity) * pack_size
+            cost = qty_in_sales_units * float(item.cost_price)
             total += cost
             details.append({
                 "id": tx.id,
                 "itemName": item.name,
-                "quantity": qty_in_pack_units,
-                "unit": item.pack_unit or item.unit,
+                "quantity": qty_in_sales_units,
+                "unit": item.unit,
                 "costPrice": float(item.cost_price),
                 "totalCost": cost,
                 "date": tx.created_at.isoformat(),
@@ -3171,9 +3169,7 @@ async def get_product_analytics(
             for r in recipes:
                 inv = db.get(models.InventoryItem, r.inventory_item_id)
                 if inv:
-                    pack_size = float(inv.pack_size) if inv.pack_size and float(inv.pack_size) > 0 else 1
-                    # cost_price kirim birligi uchun, recipe.quantity esa sotuv birligida
-                    recipe_cost += (float(r.quantity) / pack_size) * float(inv.cost_price)
+                    recipe_cost += float(r.quantity) * float(inv.cost_price)
             data["costTotal"] = recipe_cost * qty
 
         data["profit"] = data["revenue"] - data["costTotal"]

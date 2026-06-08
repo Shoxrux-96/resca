@@ -719,7 +719,7 @@ export default function AdminInventory() {
             {/* Narxlar */}
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <Label>Tan narxi (kirim)</Label>
+                <Label>Tan narxi ({itemForm.unit.toUpperCase()})</Label>
                 <Input type="number" value={itemForm.costPrice} onChange={(e) => setItemForm((f) => ({ ...f, costPrice: e.target.value }))} placeholder="5000" className="mt-1 bg-input border-border" />
               </div>
               <div>
