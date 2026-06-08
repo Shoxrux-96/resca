@@ -2344,8 +2344,33 @@ async def update_inventory_item(
         raise HTTPException(status_code=404, detail="Inventory item not found")
     patch = payload.model_dump(exclude_unset=True)
     field_map = {"minQuantity": "min_quantity", "costPrice": "cost_price", "sellPrice": "sell_price", "itemType": "item_type", "packUnit": "pack_unit", "packSize": "pack_size", "imageUrl": "image_url"}
+    old_qty = float(item.quantity)
     for k, val in patch.items():
+        if k == "quantity":
+            continue  # quantity ni keyin alohida ishlaymiz
         setattr(item, field_map.get(k, k), val)
+    # Quantity o'zgargan bo'lsa, farqni tranzaksiya sifatida yozamiz
+    if "quantity" in patch:
+        new_qty = float(patch["quantity"])
+        diff = new_qty - old_qty
+        if diff != 0:
+            if diff < 0 and float(item.quantity) < abs(diff):
+                raise HTTPException(status_code=422, detail="Yetarli miqdor yo'q")
+            item.quantity = new_qty
+            tx_type = "in" if diff > 0 else "out"
+            pack_size = float(item.pack_size) if item.pack_size and float(item.pack_size) > 0 else 1
+            if tx_type == "in":
+                tx_qty = diff / pack_size  # paket birligida
+            else:
+                tx_qty = abs(diff)  # sotuv birligida
+            db.add(models.InventoryTransaction(
+                venue_id=venueId,
+                item_id=item.id,
+                type=tx_type,
+                quantity=tx_qty,
+                note=f"Tahrirlash: miqdor {old_qty:.0f} → {new_qty:.0f} {item.unit}",
+                created_by=current_user.id,
+            ))
     db.flush()
     db.refresh(item)
     return _inv_item_to_schema(item)

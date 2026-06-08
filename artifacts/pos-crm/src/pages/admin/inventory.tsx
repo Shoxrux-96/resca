@@ -134,6 +134,9 @@ export default function AdminInventory() {
     qc.invalidateQueries({ queryKey: ["inventory", venueId] });
     qc.invalidateQueries({ queryKey: ["inventory-tx", venueId] });
     qc.invalidateQueries({ queryKey: ["inventory-alerts", venueId] });
+    qc.invalidateQueries({ queryKey: ["product-expenses", venueId] });
+    qc.invalidateQueries({ queryKey: ["finance-summary", venueId] });
+    qc.invalidateQueries({ queryKey: ["finance-chart", venueId] });
   };
 
   // --- Create item ---
@@ -224,6 +227,7 @@ export default function AdminInventory() {
     };
     if (editingItem) {
       // Tahrirlash
+      data.quantity = (parseFloat(itemForm.quantity) || 0);  // sotuv birligidagi miqdor
       updateItem.mutate({ id: editingItem.id, data });
     } else {
       // Yangi yaratish
