@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     # Telegram webhook public HTTPS URL talab qiladi.
     # Local test uchun ngrok yoki tunnel ishlating.
     PUBLIC_URL: str = "http://localhost:8000"
+    FRONTEND_PUBLIC_URL: str = "http://localhost:3002"
 
     # Web Push (VAPID)
     VAPID_PRIVATE_KEY: str = ""

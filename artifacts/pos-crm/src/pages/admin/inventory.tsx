@@ -140,7 +140,7 @@ export default function AdminInventory() {
   };
 
   // --- Create item ---
-  const emptyItemForm = { name: "", category: "boshqa", itemType: "ingredient", unit: "dona", packUnit: "kg", packSize: "1", quantity: "0", minQuantity: "0", costPrice: "0", sellPrice: "0", imageUrl: "" };
+  const emptyItemForm = { name: "", category: "boshqa", itemType: "ingredient", unit: "dona", packUnit: "dona", packSize: "1", quantity: "0", minQuantity: "0", costPrice: "0", sellPrice: "0", imageUrl: "" };
   const [itemForm, setItemForm] = useState(emptyItemForm);
 
   const createItem = useMutation({
@@ -226,8 +226,8 @@ export default function AdminInventory() {
       sellPrice: parseFloat(itemForm.sellPrice) || 0,
     };
     if (editingItem) {
-      // Tahrirlash
-      data.quantity = (parseFloat(itemForm.quantity) || 0);  // sotuv birligidagi miqdor
+      // Tahrirlash — paket birligidan sotuv birligiga o'tkazish
+      data.quantity = (parseFloat(itemForm.quantity) || 0) * (parseFloat(itemForm.packSize) || 1);
       updateItem.mutate({ id: editingItem.id, data });
     } else {
       // Yangi yaratish
@@ -238,14 +238,17 @@ export default function AdminInventory() {
 
   const openEditItem = (item: InvItem) => {
     setEditingItem(item);
+    const packSize = (item as any).packSize ?? 1;
+    // Quantity-ni paket birligida ko'rsatamiz (sotuv birligida emas)
+    const qtyInPackUnit = packSize > 0 ? item.quantity / packSize : item.quantity;
     setItemForm({
       name: item.name,
       category: item.category,
       itemType: item.itemType,
       unit: item.unit,
-      packUnit: (item as any).packUnit || "kg",
-      packSize: String((item as any).packSize ?? 1),
-      quantity: String(item.quantity),
+      packUnit: (item as any).packUnit || "dona",
+      packSize: String(packSize),
+      quantity: String(qtyInPackUnit),
       minQuantity: String(item.minQuantity),
       costPrice: String(item.costPrice),
       sellPrice: String(item.sellPrice),
@@ -680,11 +683,11 @@ export default function AdminInventory() {
             {/* Miqdor va birlik */}
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <Label>Kiritilayotgan miqdor *</Label>
+                <Label>Miqdor ({itemForm.packUnit.toUpperCase()}) *</Label>
                 <Input type="number" value={itemForm.quantity} onChange={(e) => setItemForm((f) => ({ ...f, quantity: e.target.value }))} placeholder="10" className="mt-1 bg-input border-border" />
               </div>
               <div>
-                <Label>Kirim birligi</Label>
+                <Label>Qabul qilish birligi</Label>
                 <Select value={itemForm.packUnit} onValueChange={(v) => setItemForm((f) => ({ ...f, packUnit: v }))}>
                   <SelectTrigger className="mt-1 bg-input border-border"><SelectValue /></SelectTrigger>
                   <SelectContent className="bg-card border-border">
@@ -697,26 +700,29 @@ export default function AdminInventory() {
             {/* Sotuv birligi va pack_size */}
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <Label>Sotuv birligi *</Label>
+                <Label>1 {itemForm.packUnit.toUpperCase()} tarkibi *</Label>
                 <Select value={itemForm.unit} onValueChange={(v) => setItemForm((f) => ({ ...f, unit: v }))}>
                   <SelectTrigger className="mt-1 bg-input border-border"><SelectValue /></SelectTrigger>
                   <SelectContent className="bg-card border-border">
                     {UNITS.map((u) => <SelectItem key={u.value} value={u.value}>{u.label}</SelectItem>)}
                   </SelectContent>
                 </Select>
+                <p className="text-[10px] text-muted-foreground mt-1">1 {itemForm.packUnit.toUpperCase()} ichida nechta {itemForm.unit.toUpperCase()} bor</p>
               </div>
               <div>
                 <Label>1 {itemForm.packUnit.toUpperCase()} = ? {itemForm.unit.toUpperCase()}</Label>
                 <Input type="number" value={itemForm.packSize} onChange={(e) => setItemForm((f) => ({ ...f, packSize: e.target.value }))} placeholder="6" className="mt-1 bg-input border-border" />
               </div>
             </div>
-            {parseFloat(itemForm.packSize) > 1 && parseFloat(itemForm.quantity) > 0 && (
-              <p className="text-xs text-green-500 -mt-1">= {(parseFloat(itemForm.quantity) * parseFloat(itemForm.packSize)).toFixed(0)} {itemForm.unit.toUpperCase()} bo'ladi</p>
-            )}
+            <p className="text-xs text-green-500 -mt-1">
+              {parseFloat(itemForm.packSize) > 0 && parseFloat(itemForm.quantity) > 0
+                ? `= ${(parseFloat(itemForm.quantity) * parseFloat(itemForm.packSize)).toFixed(0)} ${itemForm.unit.toUpperCase()} (omborda)`
+                : `Agar 1 ${itemForm.packUnit.toUpperCase()} = 6 ${itemForm.unit.toUpperCase()} bo'lsa, 10 ${itemForm.packUnit.toUpperCase()} = 60 ${itemForm.unit.toUpperCase()} bo'ladi`}
+            </p>
 
             {/* Min miqdor */}
             <div>
-              <Label>Min. miqdor (ogohlantirish uchun)</Label>
+                <Label>Min. miqdor ({itemForm.unit.toUpperCase()}, ogohlantirish)</Label>
               <Input type="number" value={itemForm.minQuantity} onChange={(e) => setItemForm((f) => ({ ...f, minQuantity: e.target.value }))} placeholder="10" className="mt-1 bg-input border-border" />
             </div>
 
@@ -727,7 +733,7 @@ export default function AdminInventory() {
                 <Input type="number" value={itemForm.costPrice} onChange={(e) => setItemForm((f) => ({ ...f, costPrice: e.target.value }))} placeholder="5000" className="mt-1 bg-input border-border" />
               </div>
               <div>
-                <Label>Sotuv narxi</Label>
+                <Label>Sotuv narxi ({itemForm.unit.toUpperCase()})</Label>
                 <Input type="number" value={itemForm.sellPrice} onChange={(e) => setItemForm((f) => ({ ...f, sellPrice: e.target.value }))} placeholder="8000" className="mt-1 bg-input border-border" />
               </div>
             </div>

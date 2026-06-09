@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   QrCode, Image, Globe, Ban, Percent, DoorOpen, UtensilsCrossed,
-  AlertTriangle, Settings2, ShieldCheck, UserCog, Bell, BellOff,
+  AlertTriangle, Settings2, ShieldCheck, UserCog, Bell, BellOff, Send,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useState, useEffect } from "react";
@@ -92,6 +92,24 @@ export default function AdminSettings() {
       const r = await fetch("/api/push/test", { method: "POST", headers });
       if (r.ok) toast({ title: "Test xabar yuborildi" });
     } catch { /* ignore */ }
+  };
+
+  const [tgChatId, setTgChatId] = useState("");
+  const [tgBusy, setTgBusy] = useState(false);
+
+  const linkTelegram = async () => {
+    if (!token || !tgChatId) return;
+    setTgBusy(true);
+    try {
+      const r = await fetch("/api/user/telegram/link", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ chatId: Number(tgChatId) }),
+      });
+      if (r.ok) toast({ title: "✅ Telegram bog'landi" });
+      else { const d = await r.json(); toast({ title: d.detail || "Xatolik", variant: "destructive" }); }
+    } catch { toast({ title: "Xatolik", variant: "destructive" }); }
+    finally { setTgBusy(false); }
   };
 
   const { data: settings, isLoading } = useQuery<VenueSettings>({
@@ -194,6 +212,29 @@ export default function AdminSettings() {
                   )}
                 </div>
               )}
+            </div>
+          </div>
+
+          {/* Telegram bildirishnoma */}
+          <div className="bg-card border border-border rounded-2xl overflow-hidden">
+            <div className="px-4 sm:px-5 py-3 border-b border-border bg-muted/30 flex items-center gap-2">
+              <Send className="h-4 w-4 text-muted-foreground" />
+              <h2 className="font-semibold text-foreground text-sm">Telegram bildirishnoma</h2>
+            </div>
+            <div className="px-4 sm:px-5 py-4 space-y-3">
+              <p className="text-xs text-muted-foreground">Botga <code className="text-blue-500 bg-muted px-1 rounded">/myid</code> yozib olingan ID ni kiriting:</p>
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  value={tgChatId}
+                  onChange={(e) => setTgChatId(e.target.value)}
+                  placeholder="Chat ID"
+                  className="flex-1 bg-muted border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:border-blue-500"
+                />
+                <Button size="sm" onClick={linkTelegram} disabled={tgBusy || !tgChatId}>
+                  <Send className="h-3.5 w-3.5 mr-1.5" /> Bog'lash
+                </Button>
+              </div>
             </div>
           </div>
 

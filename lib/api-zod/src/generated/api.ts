@@ -30,7 +30,7 @@ export const LoginResponse = zod.object({
   "username": zod.string(),
   "name": zod.string().nullish(),
   "phone": zod.string().nullish(),
-  "role": zod.enum(['owner', 'admin', 'kassir', 'waiter', 'oshpaz', 'mangalchi', 'dastavkachi']),
+  "role": zod.enum(['owner', 'admin', 'kassir', 'waiter', 'oshpaz', 'dastavkachi']),
   "venueId": zod.number().nullish(),
   "venueName": zod.string().nullish(),
   "createdAt": zod.string().optional()
@@ -47,7 +47,7 @@ export const GetMeResponse = zod.object({
   "username": zod.string(),
   "name": zod.string().nullish(),
   "phone": zod.string().nullish(),
-  "role": zod.enum(['owner', 'admin', 'kassir', 'waiter', 'oshpaz', 'mangalchi', 'dastavkachi']),
+  "role": zod.enum(['owner', 'admin', 'kassir', 'waiter', 'oshpaz', 'dastavkachi']),
   "venueId": zod.number().nullish(),
   "venueName": zod.string().nullish(),
   "createdAt": zod.string().optional()
@@ -175,7 +175,7 @@ export const AssignVenueAdminResponse = zod.object({
   "username": zod.string(),
   "name": zod.string().nullish(),
   "phone": zod.string().nullish(),
-  "role": zod.enum(['owner', 'admin', 'kassir', 'waiter', 'oshpaz', 'mangalchi', 'dastavkachi']),
+  "role": zod.enum(['owner', 'admin', 'kassir', 'waiter', 'oshpaz', 'dastavkachi']),
   "venueId": zod.number().nullish(),
   "venueName": zod.string().nullish(),
   "createdAt": zod.string().optional()
@@ -736,7 +736,7 @@ export const ListUsersResponseItem = zod.object({
   "username": zod.string(),
   "name": zod.string().nullish(),
   "phone": zod.string().nullish(),
-  "role": zod.enum(['owner', 'admin', 'kassir', 'waiter', 'oshpaz', 'mangalchi', 'dastavkachi']),
+  "role": zod.enum(['owner', 'admin', 'kassir', 'waiter', 'oshpaz', 'dastavkachi']),
   "venueId": zod.number().nullish(),
   "venueName": zod.string().nullish(),
   "createdAt": zod.string().optional()
@@ -752,7 +752,7 @@ export const CreateUserBody = zod.object({
   "password": zod.string(),
   "name": zod.string().optional(),
   "phone": zod.string().optional(),
-  "role": zod.enum(['owner', 'admin', 'kassir', 'waiter', 'oshpaz', 'mangalchi', 'dastavkachi']),
+  "role": zod.enum(['owner', 'admin', 'kassir', 'waiter', 'oshpaz', 'dastavkachi']),
   "venueId": zod.number().nullish()
 })
 

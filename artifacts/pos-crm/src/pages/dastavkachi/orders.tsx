@@ -4,6 +4,13 @@ import { Truck, MapPin, Package, Clock, CheckCircle, ChevronDown, ChevronUp, Nav
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 
+delete (L.Icon.Default.prototype as any)._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png",
+  iconUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png",
+  shadowUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
+});
+
 interface OnlineOrderItem {
   productId: number;
   name: string;
@@ -32,21 +39,25 @@ interface OnlineOrder {
 const statusColors: Record<string, string> = {
   new: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300",
   accepted: "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-300",
+  preparing: "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300",
+  ready: "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300",
   delivering: "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300",
-  delivered: "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300",
+  delivered: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300",
   cancelled: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300",
 };
 
 const statusLabels: Record<string, string> = {
   new: "Yangi",
   accepted: "Qabul qilingan",
-  delivering: "Yo'lda",
+  preparing: "Tayyorlanmoqda",
+  ready: "Tayyor",
+  delivering: "Yetkazilmoqda",
   delivered: "Yetkazilgan",
   cancelled: "Bekor qilingan",
 };
 
 export default function DastavkachiOrders() {
-  const { user } = useAuth();
+  const { user, token } = useAuth();
   const [orders, setOrders] = useState<OnlineOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [expandedOrder, setExpandedOrder] = useState<number | null>(null);
@@ -59,9 +70,10 @@ export default function DastavkachiOrders() {
 
   // Fetch orders (polling)
   useEffect(() => {
-    if (!user?.venueId) return;
+    if (!user?.venueId || !token) return;
+    const headers = { Authorization: `Bearer ${token}` };
     const fetchOrders = () => {
-      fetch(`/api/venues/${user.venueId}/online-orders`)
+      fetch(`/api/venues/${user.venueId}/online-orders`, { headers })
         .then((r) => r.ok ? r.json() : [])
         .then((data) => {
           setOrders(data);
@@ -98,12 +110,12 @@ export default function DastavkachiOrders() {
   }, [mapOrder]);
 
   const updateStatus = async (orderId: number, status: string) => {
-    if (!user?.venueId) return;
+    if (!user?.venueId || !token) return;
     setUpdating(orderId);
     try {
       const r = await fetch(`/api/venues/${user.venueId}/online-orders/${orderId}/status`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
         body: JSON.stringify({ status }),
       });
       if (!r.ok) throw new Error("Xatolik");
@@ -188,7 +200,7 @@ export default function DastavkachiOrders() {
                     </span>
                   </div>
                   <p className="text-[11px] text-muted-foreground">
-                    {o.createdAt?.slice(0, 16).replace("T", " ")} &middot;{" "}
+                    {o.createdAt ? new Date(o.createdAt).toLocaleString("uz-UZ", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: false }) : ""} &middot;{" "}
                     {o.deliveryType === "delivery" ? "Yetkazish" : "Olib ketish"}
                   </p>
                   {/* Customer info summary */}
@@ -262,21 +274,39 @@ export default function DastavkachiOrders() {
                         <button
                           onClick={(e) => { e.stopPropagation(); updateStatus(o.id, "accepted"); }}
                           disabled={updating === o.id}
-                          className="text-xs px-3 py-1 rounded-lg bg-yellow-500 text-white hover:bg-yellow-600 disabled:opacity-50"
+                          className="text-xs px-3 py-1 rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
                         >
                           Qabul qilish
                         </button>
                       )}
-                      {o.status === "accepted" && o.latitude && o.longitude && (
+                      {o.status === "accepted" && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); updateStatus(o.id, "preparing"); }}
+                          disabled={updating === o.id}
+                          className="text-xs px-3 py-1 rounded-lg bg-orange-500 text-white hover:bg-orange-600 disabled:opacity-50"
+                        >
+                          Oshxonaga yuborish
+                        </button>
+                      )}
+                      {o.status === "ready" && o.latitude && o.longitude && (
                         <button
                           onClick={(e) => { e.stopPropagation(); updateStatus(o.id, "delivering"); }}
                           disabled={updating === o.id}
                           className="text-xs px-3 py-1 rounded-lg bg-purple-500 text-white hover:bg-purple-600 disabled:opacity-50"
                         >
-                          Yo'lda
+                          Yetkazishga olish
                         </button>
                       )}
-                      {(o.status === "accepted" || o.status === "delivering") && (
+                      {o.status === "ready" && (!o.latitude || !o.longitude) && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); updateStatus(o.id, "delivered"); }}
+                          disabled={updating === o.id}
+                          className="text-xs px-3 py-1 rounded-lg bg-emerald-500 text-white hover:bg-emerald-600 disabled:opacity-50"
+                        >
+                          Berildi
+                        </button>
+                      )}
+                      {o.status === "delivering" && (
                         <button
                           onClick={(e) => { e.stopPropagation(); updateStatus(o.id, "delivered"); }}
                           disabled={updating === o.id}
@@ -315,6 +345,17 @@ export default function DastavkachiOrders() {
               <div className="w-full h-64 rounded-lg bg-muted flex items-center justify-center text-xs text-muted-foreground">
                 {mapOrder ? "Lokatsiya mavjud emas" : "Xaritada ko'rish uchun buyurtmani bosing"}
               </div>
+            )}
+            {mapOrder?.latitude && mapOrder?.longitude && (
+              <a
+                href={`https://www.google.com/maps?q=${mapOrder.latitude},${mapOrder.longitude}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-2 inline-flex items-center gap-1.5 text-xs text-blue-600 dark:text-blue-400 hover:underline"
+              >
+                <Navigation className="h-3.5 w-3.5" />
+                Google Maps da ochish
+              </a>
             )}
           </div>
         </div>

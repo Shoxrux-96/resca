@@ -15,6 +15,5 @@ export const UserInputRole = {
   kassir: 'kassir',
   waiter: 'waiter',
   oshpaz: 'oshpaz',
-  mangalchi: 'mangalchi',
   dastavkachi: 'dastavkachi',
 } as const;

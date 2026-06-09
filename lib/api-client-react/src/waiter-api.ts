@@ -25,6 +25,7 @@ export interface ActiveOrder {
   waiterName: string | null;
   totalAmount: number;
   notes: string | null;
+  source: string;
   createdAt: string;
   items: OpenOrderItem[];
 }
@@ -66,7 +67,15 @@ export interface CreateWaiterInput {
   password: string;
   name?: string;
   phone?: string;
-  role?: "kassir" | "waiter" | "oshpaz" | "mangalchi" | "dastavkachi";
+  role?: "kassir" | "waiter" | "oshpaz" | "dastavkachi";
+}
+
+export interface UpdateWaiterInput {
+  username?: string;
+  password?: string;
+  name?: string;
+  phone?: string;
+  role?: "kassir" | "waiter" | "oshpaz" | "dastavkachi";
 }
 
 /* ── Query keys ── */
@@ -177,6 +186,19 @@ export function useDeleteWaiter(
     mutationFn: ({ venueId, waiterId }) =>
       customFetch<void>(`/api/venues/${venueId}/waiters/${waiterId}`, {
         method: "DELETE",
+      }),
+    ...options,
+  });
+}
+
+export function useUpdateWaiter(
+  options?: UseMutationOptions<WaiterUser, unknown, { venueId: number; waiterId: number; data: UpdateWaiterInput }>
+) {
+  return useMutation<WaiterUser, unknown, { venueId: number; waiterId: number; data: UpdateWaiterInput }>({
+    mutationFn: ({ venueId, waiterId, data }) =>
+      customFetch<WaiterUser>(`/api/venues/${venueId}/waiters/${waiterId}`, {
+        method: "PUT",
+        body: JSON.stringify(data),
       }),
     ...options,
   });

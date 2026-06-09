@@ -3,7 +3,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Phone, MapPin, Clock, Package, Check, X, ChefHat, Truck, Bike, ShoppingBag } from "lucide-react";
+import { Phone, MapPin, Clock, Package, Check, X, ChefHat, Truck, Bike, ShoppingBag, Eye } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 type OnlineOrder = {
@@ -41,13 +41,10 @@ function fmt(n: number) {
 }
 
 function timeAgo(iso: string) {
-  const diff = Date.now() - new Date(iso).getTime();
-  const m = Math.floor(diff / 60000);
-  if (m < 1) return "hozir";
-  if (m < 60) return `${m} daqiqa oldin`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h} soat oldin`;
-  return new Date(iso).toLocaleDateString("uz-UZ");
+  return new Date(iso).toLocaleString("uz-UZ", {
+    day: "2-digit", month: "2-digit", year: "numeric",
+    hour: "2-digit", minute: "2-digit", hour12: false,
+  });
 }
 
 export default function OnlineOrdersPage() {
@@ -58,7 +55,8 @@ export default function OnlineOrdersPage() {
   const { toast } = useToast();
   const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
 
-  const [filter, setFilter] = useState<string>("all");
+  const [filter, setFilter] = useState<string>("new");
+  const [receiptOrder, setReceiptOrder] = useState<OnlineOrder | null>(null);
 
   const { data: orders = [], isLoading } = useQuery<OnlineOrder[]>({
     queryKey: ["online-orders", venueId, filter],
@@ -89,44 +87,19 @@ export default function OnlineOrdersPage() {
     onError: () => toast({ title: "Xatolik", variant: "destructive" }),
   });
 
-  const counts = {
-    all: orders.length,
-    new: orders.filter((o) => o.status === "new").length,
-    accepted: orders.filter((o) => o.status === "accepted").length,
-    preparing: orders.filter((o) => o.status === "preparing").length,
-    ready: orders.filter((o) => o.status === "ready").length,
-    delivering: orders.filter((o) => o.status === "delivering").length,
-  };
-
-  // Rolega qarab filtr default
-  const tabs = [
-    { value: "all", label: "Barchasi", count: counts.all },
-    { value: "new", label: "Yangi", count: counts.new },
-    { value: "preparing", label: "Tayyorlanmoqda", count: counts.preparing },
-    { value: "ready", label: "Tayyor", count: counts.ready },
-    { value: "delivering", label: "Yetkazilmoqda", count: counts.delivering },
-  ];
-
-  // Rolega qarab tugmalar
+  // Role-based actions
   function getActions(o: OnlineOrder) {
     const actions: { label: string; status: string; color: string }[] = [];
     if (o.status === "cancelled" || o.status === "delivered") return actions;
 
-    if (role === "admin" || role === "kassir" || role === "owner") {
+    if (role === "dastavkachi" || role === "admin" || role === "owner") {
       if (o.status === "new") {
         actions.push({ label: "Qabul qilish", status: "accepted", color: "bg-blue-600 hover:bg-blue-700" });
-        actions.push({ label: "Bekor", status: "cancelled", color: "bg-red-600/80 hover:bg-red-700" });
+        actions.push({ label: "Bekor qilish", status: "cancelled", color: "bg-red-600/80 hover:bg-red-700" });
       }
-    }
-    if (role === "oshpaz" || role === "mangalchi" || role === "admin" || role === "owner") {
-      if (o.status === "accepted" || o.status === "new") {
-        actions.push({ label: "Tayyorlashni boshlash", status: "preparing", color: "bg-orange-600 hover:bg-orange-700" });
+      if (o.status === "accepted") {
+        actions.push({ label: "Oshxonaga yuborish", status: "preparing", color: "bg-orange-600 hover:bg-orange-700" });
       }
-      if (o.status === "preparing") {
-        actions.push({ label: "Tayyor", status: "ready", color: "bg-green-600 hover:bg-green-700" });
-      }
-    }
-    if (role === "dastavkachi" || role === "admin" || role === "owner") {
       if (o.status === "ready" && o.deliveryType === "delivery") {
         actions.push({ label: "Yetkazishga olish", status: "delivering", color: "bg-purple-600 hover:bg-purple-700" });
       }
@@ -137,8 +110,33 @@ export default function OnlineOrdersPage() {
         actions.push({ label: "Berildi", status: "delivered", color: "bg-emerald-600 hover:bg-emerald-700" });
       }
     }
+
+    if (role === "oshpaz" || role === "admin" || role === "owner") {
+      if (o.status === "preparing") {
+        actions.push({ label: "Tayyor", status: "ready", color: "bg-green-600 hover:bg-green-700" });
+      }
+    }
+
     return actions;
   }
+
+  const counts = {
+    all: orders.length,
+    new: orders.filter((o) => o.status === "new").length,
+    accepted: orders.filter((o) => o.status === "accepted").length,
+    preparing: orders.filter((o) => o.status === "preparing").length,
+    ready: orders.filter((o) => o.status === "ready").length,
+    delivering: orders.filter((o) => o.status === "delivering").length,
+  };
+
+  const tabs = [
+    { value: "all", label: "Barchasi", count: counts.all },
+    { value: "new", label: "Yangi", count: counts.new },
+    { value: "accepted", label: "Qabul qilingan", count: counts.accepted },
+    { value: "preparing", label: "Tayyorlanmoqda", count: counts.preparing },
+    { value: "ready", label: "Tayyor", count: counts.ready },
+    { value: "delivering", label: "Yetkazilmoqda", count: counts.delivering },
+  ];
 
   return (
     <div className="max-w-5xl mx-auto space-y-4">
@@ -162,7 +160,7 @@ export default function OnlineOrdersPage() {
         ))}
       </div>
 
-      {/* Orders */}
+      {/* Content */}
       {isLoading ? (
         <p className="text-center text-muted-foreground py-12">Yuklanmoqda...</p>
       ) : orders.length === 0 ? (
@@ -171,7 +169,79 @@ export default function OnlineOrdersPage() {
           <p className="font-medium">Onlayn buyurtmalar yo'q</p>
           <p className="text-sm mt-1">Telegram WebApp orqali buyurtmalar bu yerda paydo bo'ladi</p>
         </div>
+      ) : filter === "all" ? (
+        /* ───── RECEIPT TABLE ───── */
+        <div className="overflow-x-auto">
+          <table className="w-full text-base table-fixed">
+            <thead>
+              <tr className="border-b border-border/40 text-muted-foreground text-xs uppercase tracking-wider">
+                <th className="text-left py-2.5 px-2 font-medium w-[8%]">#</th>
+                <th className="text-left py-2.5 px-2 font-medium w-[15%]">Mijoz</th>
+                <th className="text-center py-2.5 px-2 font-medium w-[10%] hidden md:table-cell">Chek</th>
+                <th className="text-right py-2.5 px-2 font-medium w-[12%]">Summa</th>
+                <th className="text-center py-2.5 px-2 font-medium w-[12%]">Holat</th>
+                <th className="text-center py-2.5 px-2 font-medium w-[10%] hidden md:table-cell">Yetkazish</th>
+                <th className="text-center py-2.5 px-2 font-medium w-[18%] hidden md:table-cell">Vaqt</th>
+                <th className="text-right py-2.5 px-2 font-medium w-[15%]">Amal</th>
+              </tr>
+            </thead>
+            <tbody>
+              {orders.map((o) => {
+                const meta = STATUS_META[o.status];
+                const StatusIcon = meta.icon;
+                const actions = getActions(o);
+                return (
+                  <tr key={o.id} className="border-b border-border/20">
+                    <td className="py-2 px-2 font-bold text-foreground truncate">#{o.id}</td>
+                    <td className="py-2 px-2 truncate">
+                      <p className="font-medium text-foreground truncate">{o.customerName}</p>
+                      {o.customerPhone && <p className="text-xs text-muted-foreground truncate">{o.customerPhone}</p>}
+                    </td>
+                    <td className="py-2 px-2 text-center hidden md:table-cell">
+                      <button
+                        onClick={() => setReceiptOrder(o)}
+                        className="bg-zinc-800 hover:bg-zinc-700 text-white text-[11px] font-medium h-7 px-2.5 rounded-md"
+                      >
+                        Chek
+                      </button>
+                    </td>
+                    <td className="py-2 px-2 text-right font-semibold text-foreground whitespace-nowrap truncate">
+                      {fmt(o.totalAmount)} so'm
+                    </td>
+                    <td className="py-2 px-2 text-center">
+                      <span className={`inline-flex items-center gap-1 text-[11px] font-medium ${meta.color.replace('border-', '')}`}>
+                        <StatusIcon className="h-3.5 w-3.5 shrink-0" />
+                        <span className="truncate">{meta.label}</span>
+                      </span>
+                    </td>
+                    <td className="py-2 px-2 text-center text-xs text-muted-foreground truncate hidden md:table-cell">
+                      {o.deliveryType === "delivery" ? "Yetkazish" : "Olib ketish"}
+                    </td>
+                    <td className="py-2 px-2 text-center text-xs text-muted-foreground whitespace-nowrap truncate hidden md:table-cell">
+                      {timeAgo(o.createdAt)}
+                    </td>
+                    <td className="py-2 px-2 text-right">
+                      <div className="flex gap-1 justify-end">
+                        {actions.length > 0 && actions.slice(0, 1).map((a) => (
+                          <button
+                            key={a.status}
+                            className={`${a.color} text-white text-[11px] font-medium h-7 px-2.5 rounded-md`}
+                            onClick={() => updateStatus.mutate({ id: o.id, status: a.status })}
+                            disabled={updateStatus.isPending}
+                          >
+                            {a.label}
+                          </button>
+                        ))}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       ) : (
+        /* ───── CARD VIEW ───── */
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {orders.map((o) => {
             const meta = STATUS_META[o.status];
@@ -254,6 +324,65 @@ export default function OnlineOrdersPage() {
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* ───── RECEIPT MODAL ───── */}
+      {receiptOrder && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setReceiptOrder(null)}>
+          <div
+            className="bg-white text-black w-[320px] max-h-[90vh] overflow-y-auto p-5 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="text-center border-b border-black/20 pb-3 mb-3">
+              <h2 className="text-lg font-bold uppercase">Chek #{receiptOrder.id}</h2>
+              <p className="text-xs text-black/60 mt-0.5">{timeAgo(receiptOrder.createdAt)}</p>
+            </div>
+
+            {/* Customer */}
+            <div className="text-xs space-y-0.5 mb-3 pb-3 border-b border-black/20">
+              <p><span className="text-black/60">Mijoz:</span> <span className="font-medium">{receiptOrder.customerName}</span></p>
+              {receiptOrder.customerPhone && (
+                <p><span className="text-black/60">Tel:</span> {receiptOrder.customerPhone}</p>
+              )}
+              {receiptOrder.customerAddress && (
+                <p><span className="text-black/60">Manzil:</span> {receiptOrder.customerAddress}</p>
+              )}
+              <p><span className="text-black/60">Yetkazish:</span> {receiptOrder.deliveryType === "delivery" ? "Yetkazib berish" : "Olib ketish"}</p>
+            </div>
+
+            {/* Items */}
+            <div className="text-xs space-y-1 mb-3 pb-3 border-b border-black/20">
+              {receiptOrder.items.map((it, idx) => (
+                <div key={idx} className="flex justify-between">
+                  <span>{it.name} ×{it.quantity}</span>
+                  <span className="font-medium">{fmt(it.price * it.quantity)} so'm</span>
+                </div>
+              ))}
+            </div>
+
+            {/* Total */}
+            <div className="flex justify-between text-sm font-bold mb-4">
+              <span>JAMI</span>
+              <span>{fmt(receiptOrder.totalAmount)} so'm</span>
+            </div>
+
+            {/* Status */}
+            <div className="text-center text-xs text-black/60 border-t border-black/20 pt-3">
+              {STATUS_META[receiptOrder.status] && (
+                <p>Holat: {STATUS_META[receiptOrder.status].label}</p>
+              )}
+            </div>
+
+            {/* Close */}
+            <button
+              onClick={() => setReceiptOrder(null)}
+              className="mt-4 w-full py-2 text-xs font-medium bg-black/5 hover:bg-black/10 rounded"
+            >
+              Yopish
+            </button>
+          </div>
         </div>
       )}
     </div>

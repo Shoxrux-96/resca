@@ -13,6 +13,9 @@ import OwnerDashboard from "@/pages/owner/dashboard";
 import OwnerVenues from "@/pages/owner/venues";
 import OwnerVenueDetail from "@/pages/owner/venue-detail";
 import OwnerUsers from "@/pages/owner/users";
+import OwnerTariff from "@/pages/owner/tariff";
+import OwnerPayments from "@/pages/owner/payments";
+import OwnerReports from "@/pages/owner/reports";
 import MenuPage from "@/pages/menu";
 
 import AdminDashboard from "@/pages/admin/dashboard";
@@ -28,12 +31,12 @@ import AdminExpenses from "@/pages/admin/expenses";
 import AdminRevenue from "@/pages/admin/revenue";
 
 import WaiterTables from "@/pages/waiter/tables";
+import WaiterOrders from "@/pages/waiter/orders";
 import WaiterOrder from "@/pages/waiter/order";
 import WaiterBookings from "@/pages/waiter/bookings";
 
-import KassirDashboard from "@/pages/kassir/dashboard";
 import OshpazOrders from "@/pages/oshpaz/orders";
-import MangalchiOrders from "@/pages/mangalchi/orders";
+
 import DastavkachiOrders from "@/pages/dastavkachi/orders";
 import OnlineOrdersPage from "@/pages/online-orders";
 import TelegramMenu from "@/pages/tg-menu";
@@ -49,15 +52,14 @@ const queryClient = new QueryClient({
   },
 });
 
-type AppRole = "owner" | "admin" | "kassir" | "waiter" | "oshpaz" | "mangalchi" | "dastavkachi";
+type AppRole = "owner" | "admin" | "kassir" | "waiter" | "oshpaz" | "dastavkachi";
 
 const ROLE_HOME: Record<AppRole, string> = {
   owner: "/owner/dashboard",
   admin: "/admin/dashboard",
-  kassir: "/kassir/dashboard",
-  waiter: "/waiter/tables",
+  kassir: "/admin/dashboard",
+  waiter: "/waiter/orders",
   oshpaz: "/oshpaz/orders",
-  mangalchi: "/mangalchi/orders",
   dastavkachi: "/dastavkachi/orders",
 };
 
@@ -103,11 +105,10 @@ function Router() {
       <Route path="/menu/:venueName" component={MenuPage} />
       <Route path="/tg-menu/:venueId" component={TelegramMenu} />
 
-      {/* Online Orders — admin/kassir/oshpaz/mangalchi/dastavkachi */}
-      <Route path="/admin/online-orders" component={() => <ProtectedRoute component={OnlineOrdersPage} roles={["admin", "owner"]} />} />
+      {/* Online Orders — admin/kassir/oshpaz/dastavkachi */}
+      <Route path="/admin/online-orders" component={() => <ProtectedRoute component={OnlineOrdersPage} roles={["admin", "owner", "kassir"]} />} />
       <Route path="/kassir/online-orders" component={() => <ProtectedRoute component={OnlineOrdersPage} roles={["kassir"]} />} />
       <Route path="/oshpaz/online-orders" component={() => <ProtectedRoute component={OnlineOrdersPage} roles={["oshpaz"]} />} />
-      <Route path="/mangalchi/online-orders" component={() => <ProtectedRoute component={OnlineOrdersPage} roles={["mangalchi"]} />} />
       <Route path="/dastavkachi/online-orders" component={() => <ProtectedRoute component={OnlineOrdersPage} roles={["dastavkachi"]} />} />
 
       {/* Owner routes */}
@@ -115,27 +116,27 @@ function Router() {
       <Route path="/owner/venues" component={() => <ProtectedRoute component={OwnerVenues} roles={["owner"]} />} />
       <Route path="/owner/venues/:id" component={() => <ProtectedRoute component={OwnerVenueDetail} roles={["owner"]} />} />
       <Route path="/owner/users" component={() => <ProtectedRoute component={OwnerUsers} roles={["owner"]} />} />
+      <Route path="/owner/tariff" component={() => <ProtectedRoute component={OwnerTariff} roles={["owner"]} />} />
+      <Route path="/owner/payments" component={() => <ProtectedRoute component={OwnerPayments} roles={["owner"]} />} />
+      <Route path="/owner/reports" component={() => <ProtectedRoute component={OwnerReports} roles={["owner"]} />} />
 
       {/* Admin routes */}
-      <Route path="/admin/dashboard" component={() => <ProtectedRoute component={AdminDashboard} roles={["admin"]} />} />
-      <Route path="/admin/pos" component={() => <ProtectedRoute component={AdminPos} roles={["admin"]} />} />
-      <Route path="/admin/products" component={() => <ProtectedRoute component={AdminProducts} roles={["admin"]} />} />
-      <Route path="/admin/rooms" component={() => <ProtectedRoute component={AdminRooms} roles={["admin"]} />} />
-      <Route path="/admin/staff" component={() => <ProtectedRoute component={AdminStaff} roles={["admin"]} />} />
-      <Route path="/admin/inventory" component={() => <ProtectedRoute component={AdminInventory} roles={["admin"]} />} />
-      <Route path="/admin/debts" component={() => <ProtectedRoute component={AdminDebts} roles={["admin"]} />} />
+      <Route path="/admin/dashboard" component={() => <ProtectedRoute component={AdminDashboard} roles={["admin", "kassir"]} />} />
+      <Route path="/admin/pos" component={() => <ProtectedRoute component={AdminPos} roles={["admin", "kassir"]} />} />
+      <Route path="/admin/products" component={() => <ProtectedRoute component={AdminProducts} roles={["admin", "kassir"]} />} />
+      <Route path="/admin/rooms" component={() => <ProtectedRoute component={AdminRooms} roles={["admin", "kassir"]} />} />
+      <Route path="/admin/staff" component={() => <ProtectedRoute component={AdminStaff} roles={["admin", "owner"]} />} />
+      <Route path="/admin/inventory" component={() => <ProtectedRoute component={AdminInventory} roles={["admin", "kassir"]} />} />
+      <Route path="/admin/debts" component={() => <ProtectedRoute component={AdminDebts} roles={["admin", "kassir"]} />} />
       <Route path="/admin/report" component={() => <ProtectedRoute component={AdminReport} roles={["admin"]} />} />
-      <Route path="/admin/expenses" component={() => <ProtectedRoute component={AdminExpenses} roles={["admin"]} />} />
-      <Route path="/admin/revenue" component={() => <ProtectedRoute component={AdminRevenue} roles={["admin"]} />} />
+      <Route path="/admin/expenses" component={() => <ProtectedRoute component={AdminExpenses} roles={["admin", "kassir"]} />} />
+      <Route path="/admin/revenue" component={() => <ProtectedRoute component={AdminRevenue} roles={["admin", "kassir"]} />} />
       <Route path="/admin/settings" component={() => <ProtectedRoute component={AdminSettings} roles={["admin"]} />} />
 
-      {/* Kassir routes */}
-      <Route path="/kassir/dashboard" component={() => <ProtectedRoute component={KassirDashboard} roles={["kassir"]} />} />
-      <Route path="/kassir/pos" component={() => <ProtectedRoute component={AdminPos} roles={["kassir"]} />} />
-      <Route path="/kassir/debts" component={() => <ProtectedRoute component={AdminDebts} roles={["kassir"]} />} />
-      <Route path="/kassir/report" component={() => <ProtectedRoute component={AdminReport} roles={["kassir"]} />} />
+      {/* Kassir routes (kassir uses admin routes via sidebar now) */}
 
       {/* Waiter routes */}
+      <Route path="/waiter/orders" component={() => <ProtectedRoute component={WaiterOrders} roles={["waiter"]} />} />
       <Route path="/waiter/tables" component={() => <ProtectedRoute component={WaiterTables} roles={["waiter"]} />} />
       <Route path="/waiter/bookings" component={() => <ProtectedRoute component={WaiterBookings} roles={["waiter"]} />} />
       <Route path="/waiter/table/:tableId" component={() => <ProtectedRoute component={WaiterOrder} roles={["waiter"]} />} />
@@ -143,11 +144,9 @@ function Router() {
       {/* Oshpaz routes */}
       <Route path="/oshpaz/orders" component={() => <ProtectedRoute component={OshpazOrders} roles={["oshpaz"]} />} />
 
-      {/* Mangalchi routes */}
-      <Route path="/mangalchi/orders" component={() => <ProtectedRoute component={MangalchiOrders} roles={["mangalchi"]} />} />
 
-      {/* Dastavkachi routes */}
-      <Route path="/dastavkachi/orders" component={() => <ProtectedRoute component={DastavkachiOrders} roles={["dastavkachi"]} />} />
+      {/* Dastavkachi routes — admin ham kira oladi */}
+      <Route path="/dastavkachi/orders" component={() => <ProtectedRoute component={DastavkachiOrders} roles={["dastavkachi", "admin", "kassir"]} />} />
 
       <Route component={NotFound} />
     </Switch>

@@ -3,6 +3,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { TrendingUp, AlertCircle, ShoppingBag, Clock, QrCode } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
+import ProductAnalytics from "./product-analytics";
 
 function fmt(n: number) {
   return new Intl.NumberFormat("uz-UZ", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n) + " so'm";
@@ -82,56 +83,34 @@ export default function AdminDashboard() {
         </Card>
       </div>
 
-      {/* QR Code Section */}
-      <Card className="bg-card border-border">
-        <CardHeader>
-          <CardTitle className="text-foreground text-sm flex items-center gap-2">
-            <QrCode className="h-4 w-4 text-[#E0714F]" />
-            Online Menyu QR Kodi
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="text-xs text-muted-foreground mb-3">
-            Bu QR kodni bosib chiqarib, stol ustiga qo'ying. Mijozlar skanerlab menyuni ko'radi.
-          </p>
-          <div className="flex flex-col sm:flex-row items-center gap-4 bg-zinc-900/50 rounded-xl p-4">
-            <QRCodeSVG value={menuUrl} size={120} level="M" className="shrink-0" />
-            <div className="text-sm text-center sm:text-left">
-              <p className="text-foreground font-medium">{user?.venueName}</p>
-              <p className="text-muted-foreground mt-1 break-all text-xs">{menuUrl}</p>
-              <p className="text-xs text-muted-foreground mt-2">
-                Skanerlang va menyuni ko'ring
-              </p>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {data?.topProducts && data.topProducts.length > 0 && (
-          <Card className="bg-card border-border">
-            <CardHeader>
-              <CardTitle className="text-foreground text-sm">Eng Ko'p Sotilgan</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              {data.topProducts.map((p, i) => (
-                <div key={p.productId} className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <span className="text-xs text-muted-foreground w-4">{i + 1}.</span>
-                    <span className="text-sm text-foreground">{p.productName}</span>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-xs text-green-400 font-medium">{fmt(p.revenue)}</p>
-                    <p className="text-xs text-muted-foreground">{p.totalSold} ta</p>
-                  </div>
-                </div>
-              ))}
-            </CardContent>
-          </Card>
-        )}
+        {/* QR Code Section */}
+        <Card className="bg-card border-border h-full">
+          <CardHeader>
+            <CardTitle className="text-foreground text-sm flex items-center gap-2">
+              <QrCode className="h-4 w-4 text-[#E0714F]" />
+              Online Menyu QR Kodi
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-xs text-muted-foreground mb-3">
+              Bu QR kodni bosib chiqarib, stol ustiga qo'ying. Mijozlar skanerlab menyuni ko'radi.
+            </p>
+            <div className="flex flex-col items-center gap-3 bg-zinc-900/50 rounded-xl p-4">
+              <QRCodeSVG value={menuUrl} size={130} level="M" className="shrink-0" />
+              <div className="text-sm text-center">
+                <p className="text-foreground font-medium">{user?.venueName}</p>
+                <p className="text-muted-foreground mt-1 break-all text-xs">{menuUrl}</p>
+                <p className="text-xs text-muted-foreground mt-2">
+                  Skanerlang va menyuni ko'ring
+                </p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
 
         {data?.recentOrders && data.recentOrders.length > 0 && (
-          <Card className="bg-card border-border">
+          <Card className="bg-card border-border h-full">
             <CardHeader className="flex flex-row items-center gap-2">
               <Clock className="h-4 w-4 text-muted-foreground" />
               <CardTitle className="text-foreground text-sm">So'nggi Buyurtmalar</CardTitle>
@@ -155,6 +134,9 @@ export default function AdminDashboard() {
           </Card>
         )}
       </div>
+
+      {/* Mahsulot analitikasi */}
+      <ProductAnalytics />
     </div>
   );
 }

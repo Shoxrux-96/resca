@@ -15,6 +15,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { RefreshCw, DoorOpen, Users, Clock } from "lucide-react";
 import { formatDateTime24 } from "@/lib/datetime";
+import { useToast } from "@/hooks/use-toast";
 
 type RoomBooking = {
   id: number; venueId: number; roomId: number; tableId?: number | null;
@@ -37,6 +38,7 @@ export default function WaiterTables() {
   const venueId = user?.venueId ?? 0;
   const [, setLocation] = useLocation();
   const qc = useQueryClient();
+  const { toast } = useToast();
   const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
   const [refreshing, setRefreshing] = useState(false);
 
@@ -48,6 +50,18 @@ export default function WaiterTables() {
   });
   const { data: openOrders } = useListOpenOrders(venueId, {
     query: { enabled: !!venueId, queryKey: getListOpenOrdersQueryKey(venueId), refetchInterval: 5_000 },
+  });
+  const { data: occupiedTableIds } = useQuery<number[]>({
+    queryKey: ["occupied-tables", venueId],
+    enabled: !!venueId && !!token,
+    refetchInterval: 5_000,
+    queryFn: async () => {
+      const res = await fetch(`/api/venues/${venueId}/occupied-tables`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return [];
+      return res.json();
+    },
   });
   const { data: bookings } = useQuery<RoomBooking[]>({
     queryKey: ["room-bookings", venueId],
@@ -90,6 +104,7 @@ export default function WaiterTables() {
 
   const mergedRooms: RoomWithStatus[] = useMemo(() => {
     if (!rooms || !tables) return [];
+    const occupiedSet = new Set(occupiedTableIds ?? []);
     const occupiedMap = new Map<number, ActiveOrder>();
     for (const o of openOrders ?? []) {
       if (o.tableId != null) occupiedMap.set(o.tableId, o);
@@ -99,7 +114,7 @@ export default function WaiterTables() {
         .filter((t) => t.roomId === room.id)
         .map((t) => {
           const order = occupiedMap.get(t.id);
-          const orderOccupied = !!order;
+          const orderOccupied = occupiedSet.has(t.id) || !!order;
           const booked = bookingByTable.get(t.id);
           const roomBooked = bookingRoomIds.has(room.id);
           const isBooked = !!booked || roomBooked;
@@ -132,6 +147,10 @@ export default function WaiterTables() {
 
   const handleTableClick = (table: TableWithStatus) => {
     if (!table.isActive) return;
+    if (table.isOccupied && !table.openOrderId) {
+      toast({ title: "Bu stol boshqa afitsiant tomonidan xizmat ko'rsatilmoqda", variant: "destructive" });
+      return;
+    }
     if (table.isBooked && !table.isOccupied) {
       setLocation(`/waiter/table/${table.id}`);
       return;
@@ -145,7 +164,7 @@ export default function WaiterTables() {
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
           <h1 className="text-xl sm:text-2xl font-bold text-foreground truncate">Xona va Stollar</h1>
-          <p className="text-muted-foreground text-xs sm:text-sm mt-0.5 truncate">{user?.venueName ?? "Filial"}</p>
+          <p className="text-muted-foreground text-xs sm:text-sm mt-0.5 truncate">{user?.venueName ?? "Korxona"}</p>
         </div>
         <div className="flex items-center gap-3 shrink-0">
           {/* Stats */}

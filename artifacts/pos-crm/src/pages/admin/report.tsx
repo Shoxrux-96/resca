@@ -47,6 +47,7 @@ type Order = {
   totalAmount: number;
   paymentType: string;
   status: string;
+  source?: string;
   notes?: string | null;
   items: OrderItem[];
   createdAt: string;
@@ -267,10 +268,10 @@ export default function AdminReport() {
                         <th className="text-left py-2.5 px-4 text-xs text-muted-foreground font-medium">ID</th>
                         <th className="text-left py-2.5 px-4 text-xs text-muted-foreground font-medium">Sana</th>
                         <th className="text-left py-2.5 px-4 text-xs text-muted-foreground font-medium">Mijoz / Stol</th>
-                        <th className="text-left py-2.5 px-4 text-xs text-muted-foreground font-medium">Tur</th>
-                        <th className="text-left py-2.5 px-4 text-xs text-muted-foreground font-medium">Holat</th>
+                        <th className="text-left py-2.5 px-4 text-xs text-muted-foreground font-medium hidden md:table-cell">Tur</th>
+                        <th className="text-left py-2.5 px-4 text-xs text-muted-foreground font-medium hidden md:table-cell">Holat</th>
                         <th className="text-right py-2.5 px-4 text-xs text-muted-foreground font-medium">Summa</th>
-                        <th className="text-center py-2.5 px-4 text-xs text-muted-foreground font-medium">Chek</th>
+                        <th className="text-center py-2.5 px-4 text-xs text-muted-foreground font-medium hidden md:table-cell">Chek</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -278,20 +279,25 @@ export default function AdminReport() {
                         const pm = PAYMENT_LABELS[o.paymentType] ?? { label: o.paymentType, color: "bg-muted text-muted-foreground border-border" };
                         return (
                           <tr key={o.id} className="border-b border-border/50 hover:bg-accent/50 transition-colors cursor-pointer" onClick={() => setSelectedOrder(o)}>
-                            <td className="py-3 px-4 text-muted-foreground">#{o.id}</td>
+                            <td className="py-3 px-4 text-muted-foreground flex items-center gap-2">
+                              #{o.id}
+                              {o.source === "online" && (
+                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 font-medium">Onlayn</span>
+                              )}
+                            </td>
                             <td className="py-3 px-4 text-muted-foreground whitespace-nowrap text-xs">{fmtDate(o.createdAt)}</td>
                             <td className="py-3 px-4">
                               <p className="text-foreground">{o.customerName ?? "Mehmon"}</p>
                               {(o.roomName || o.tableNumber) && <p className="text-xs text-muted-foreground">{o.roomName} {o.tableNumber ? `· Stol ${o.tableNumber}` : ""}</p>}
                             </td>
-                            <td className="py-3 px-4"><Badge variant="outline" className={`text-xs ${pm.color}`}>{pm.label}</Badge></td>
-                            <td className="py-3 px-4">
+                            <td className="py-3 px-4 hidden md:table-cell"><Badge variant="outline" className={`text-xs ${pm.color}`}>{pm.label}</Badge></td>
+                            <td className="py-3 px-4 hidden md:table-cell">
                               <span className={`text-xs ${o.status === "completed" ? "text-green-400" : o.status === "cancelled" ? "text-red-400" : "text-yellow-400"}`}>
                                 {STATUS_LABELS[o.status as string] ?? o.status}
                               </span>
                             </td>
                             <td className="py-3 px-4 text-right font-semibold text-foreground">{fmtFull(o.totalAmount)}</td>
-                            <td className="py-3 px-4 text-center">
+                            <td className="py-3 px-4 text-center hidden md:table-cell">
                               <button onClick={(e) => { e.stopPropagation(); setSelectedOrder(o); }} className="text-blue-400 hover:text-blue-300 transition-colors" title="Chekni ko'rish">
                                 <Receipt className="h-4 w-4" />
                               </button>
@@ -326,7 +332,7 @@ export default function AdminReport() {
                 style={{
                   fontFamily: "'Courier New', monospace",
                   fontSize: "10px",
-                  width: "220px",
+                  maxWidth: "300px",
                   color: "#000",
                   lineHeight: "1.35",
                 }}
@@ -402,11 +408,10 @@ export default function AdminReport() {
                       <title>CHEK #${checkNum}</title>
                       <style>
                         * { margin:0; padding:0; box-sizing:border-box; }
-                        @page { size: 58mm auto; margin: 0; }
-                        @media print { html, body { width: 58mm; } }
+                        @page { margin: 0; }
                         body {
                           font-family: 'Courier New', 'Courier', monospace;
-                          font-size: 10px; width: 58mm; max-width: 58mm;
+                          font-size: 10px; max-width: 100%;
                           background: #fff; color: #000; padding: 2mm 3mm;
                           line-height: 1.35;
                           print-color-adjust: exact;

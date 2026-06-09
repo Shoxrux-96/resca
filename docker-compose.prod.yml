@@ -6,7 +6,7 @@ services:
       POSTGRES_PASSWORD: restopass
       POSTGRES_DB: restocrm
     ports:
-      - "5434:5432"
+      - "127.0.0.1:5434:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     restart: unless-stopped
@@ -24,11 +24,11 @@ services:
       - backend/.env
     environment:
       DATABASE_URL: postgresql+psycopg://restouser:restopass@db:5432/restocrm
-      PUBLIC_URL: "https://surname-travis-valuable-highs.trycloudflare.com"
-      FRONTEND_PUBLIC_URL: "https://legs-cosmetic-politics-media.trycloudflare.com"
-      CORS_ORIGINS: "https://legs-cosmetic-politics-media.trycloudflare.com,http://localhost:3002,https://surname-travis-valuable-highs.trycloudflare.com"
+      PUBLIC_URL: "https://resca.uz"
+      FRONTEND_PUBLIC_URL: "https://resca.uz"
+      CORS_ORIGINS: "https://resca.uz"
     ports:
-      - "8001:8000"
+      - "127.0.0.1:8001:8000"
     depends_on:
       db:
         condition: service_healthy
@@ -42,7 +42,7 @@ services:
       BASE_PATH: "/"
       PORT: "3000"
     ports:
-      - "3002:80"
+      - "127.0.0.1:3002:80"
     depends_on:
       - backend
     restart: unless-stopped

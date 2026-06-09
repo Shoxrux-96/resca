@@ -23,7 +23,6 @@ export const UserRole = {
   kassir: 'kassir',
   waiter: 'waiter',
   oshpaz: 'oshpaz',
-  mangalchi: 'mangalchi',
   dastavkachi: 'dastavkachi',
 } as const;
 
@@ -56,7 +55,6 @@ export const UserInputRole = {
   kassir: 'kassir',
   waiter: 'waiter',
   oshpaz: 'oshpaz',
-  mangalchi: 'mangalchi',
   dastavkachi: 'dastavkachi',
 } as const;
 

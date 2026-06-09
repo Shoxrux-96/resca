@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useParams } from "wouter";
 import { customFetch } from "@workspace/api-client-react/custom-fetch";
+import { MapPin } from "lucide-react";
 
 type PublicVenue = {
   id: number;
@@ -11,6 +12,9 @@ type PublicVenue = {
   instagram: string | null;
   telegram: string | null;
   facebook: string | null;
+  logoUrl: string | null;
+  latitude: number | null;
+  longitude: number | null;
 };
 
 type PublicProduct = {
@@ -183,15 +187,32 @@ export default function MenuPage() {
         <div className="max-w-full px-10 sm:px-12 lg:px-14 py-4 sm:py-5">
           <div className="flex items-center justify-between gap-4">
             {/* Left — venue avatar + name + type */}
-            <div className="flex items-center gap-3 sm:gap-4 min-w-0">
-              <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-full bg-[#E0714F] flex items-center justify-center text-white text-lg sm:text-xl font-bold shadow shrink-0">
-                {venue.name.charAt(0).toUpperCase()}
-              </div>
+              <div className="flex items-center gap-3 sm:gap-4 min-w-0">
+              {venue.logoUrl ? (
+                <img
+                  src={venue.logoUrl}
+                  alt={venue.name}
+                  className="w-12 h-12 sm:w-14 sm:h-14 rounded-full object-cover shadow shrink-0"
+                />
+              ) : (
+                <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-full bg-[#E0714F] flex items-center justify-center text-white text-lg sm:text-xl font-bold shadow shrink-0">
+                  {venue.name.charAt(0).toUpperCase()}
+                </div>
+              )}
               <div className="min-w-0">
                 <h1 className="text-lg sm:text-xl font-bold text-zinc-900 dark:text-zinc-100 truncate">{venue.name}</h1>
                 <div className="flex items-center gap-1.5 text-xs sm:text-sm text-zinc-500 dark:text-zinc-400 truncate">
                   <span>{venue.type === "cafe" ? "☕ Kafe" : "🍽️ Restoran"}</span>
-                  {venue.address && <><span className="text-zinc-300 dark:text-zinc-600">·</span><span className="truncate">{venue.address}</span></>}
+                  {venue.address && (
+                    <><span className="text-zinc-300 dark:text-zinc-600">·</span>
+                      <a href={`https://www.google.com/maps?q=${venue.latitude ? `${venue.latitude},${venue.longitude}` : encodeURIComponent(venue.address)}`}
+                        target="_blank" rel="noopener noreferrer"
+                        className="truncate text-zinc-500 dark:text-zinc-400 hover:text-[#E0714F] dark:hover:text-[#E0714F] transition-colors inline-flex items-center gap-1">
+                        <MapPin className="w-3 h-3 shrink-0" />
+                        <span className="truncate">{venue.address}</span>
+                      </a>
+                    </>
+                  )}
                 </div>
               </div>
             </div>

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useLocation } from "wouter";
 import {
   useListVenues,
@@ -15,7 +15,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Store, ChevronRight, Trash2 } from "lucide-react";
+import { Plus, Store, Trash2, Search, ChevronLeft, ChevronRight } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 export default function OwnerVenues() {
@@ -26,6 +26,9 @@ export default function OwnerVenues() {
   const qc = useQueryClient();
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const [page, setPage] = useState(1);
+  const [perPage, setPerPage] = useState(25);
   const [form, setForm] = useState({ name: "", type: "cafe" as VenueInputType, logoUrl: "", address: "", phone: "" });
 
   const handleCreate = () => {
@@ -36,7 +39,7 @@ export default function OwnerVenues() {
           qc.invalidateQueries({ queryKey: getListVenuesQueryKey() });
           setOpen(false);
           setForm({ name: "", type: "cafe", logoUrl: "", address: "", phone: "" });
-          toast({ title: "Filial qo'shildi" });
+          toast({ title: "Korxona qo'shildi" });
         },
         onError: () => toast({ title: "Xatolik", variant: "destructive" }),
       }
@@ -45,20 +48,41 @@ export default function OwnerVenues() {
 
   const handleDelete = (id: number, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!confirm("Filialni o'chirishni tasdiqlaysizmi?")) return;
+    if (!confirm("Korxonani o'chirishni tasdiqlaysizmi?")) return;
     deleteVenue.mutate(
       { id },
       {
         onSuccess: () => {
           qc.invalidateQueries({ queryKey: getListVenuesQueryKey() });
-          toast({ title: "Filial o'chirildi" });
+          toast({ title: "Korxona o'chirildi" });
         },
       }
     );
   };
 
+  const filtered = useMemo(() => {
+    if (!venues) return [];
+    const q = search.toLowerCase();
+    return venues.filter(
+      (v) =>
+        v.name.toLowerCase().includes(q) ||
+        (v.address?.toLowerCase() || "").includes(q) ||
+        (v.phone?.toLowerCase() || "").includes(q) ||
+        (v.adminName?.toLowerCase() || "").includes(q)
+    );
+  }, [venues, search]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / perPage));
+  const paginated = filtered.slice((page - 1) * perPage, page * perPage);
+
+  const handlePageChange = (p: number) => {
+    if (p >= 1 && p <= totalPages) setPage(p);
+  };
+
+  const PER_PAGE_OPTIONS = [10, 25, 50];
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
           <h1 className="text-xl sm:text-2xl font-bold text-foreground">Cafe va restoranlar</h1>
@@ -66,73 +90,161 @@ export default function OwnerVenues() {
         </div>
         <Button onClick={() => setOpen(true)} className="bg-blue-600 hover:bg-blue-700 shrink-0" size="sm">
           <Plus className="h-4 w-4 sm:mr-2" />
-          <span className="hidden sm:inline">Yangi Filial</span>
+          <span className="hidden sm:inline">Yangi Korxona</span>
         </Button>
       </div>
 
-      {isLoading ? (
-        <div className="text-muted-foreground">Yuklanmoqda...</div>
-      ) : !venues?.length ? (
-        <Card className="bg-card border-border">
-          <CardContent className="py-16 text-center">
-            <Store className="h-12 w-12 text-zinc-700 mx-auto mb-4" />
-            <p className="text-muted-foreground">Hali filial yo'q</p>
-          </CardContent>
-        </Card>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {venues.map((venue) => (
-            <Card
-              key={venue.id}
-              onClick={() => setLocation(`/owner/venues/${venue.id}`)}
-              className="bg-card border-border hover:border-blue-700 cursor-pointer transition-colors"
-            >
-              <CardHeader className="flex flex-row items-start justify-between pb-2">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-lg bg-blue-600/10 flex items-center justify-center overflow-hidden">
-                    {venue.logoUrl ? (
-                      <img src={venue.logoUrl} alt={venue.name} className="w-full h-full object-cover" />
-                    ) : (
-                      <Store className="h-5 w-5 text-blue-500" />
-                    )}
-                  </div>
-                  <div>
-                    <CardTitle className="text-foreground text-lg">{venue.name}</CardTitle>
-                    <Badge variant="outline" className="mt-1 text-xs capitalize border-border text-muted-foreground">
-                      {venue.type === "cafe" ? "Kafe" : "Restoran"}
-                    </Badge>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
+      <Card className="bg-card border-border">
+        <CardHeader className="pb-3">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                value={search}
+                onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+                placeholder="Qidirish..."
+                className="bg-input border-border pl-9 h-9 text-sm"
+              />
+            </div>
+            <div className="flex items-center gap-2 text-sm text-muted-foreground shrink-0">
+              <span>Satr:</span>
+              <Select value={String(perPage)} onValueChange={(v) => { setPerPage(Number(v)); setPage(1); }}>
+                <SelectTrigger className="bg-input border-border h-8 w-16">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="bg-input border-border">
+                  {PER_PAGE_OPTIONS.map((n) => (
+                    <SelectItem key={n} value={String(n)}>{n}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="p-0">
+          {isLoading ? (
+            <div className="text-muted-foreground text-center py-12">Yuklanmoqda...</div>
+          ) : !paginated.length ? (
+            <div className="text-center py-16">
+              <Store className="h-12 w-12 text-zinc-700 mx-auto mb-4" />
+              <p className="text-muted-foreground">{search ? "Topilmadi" : "Hali korxona yo'q"}</p>
+            </div>
+          ) : (
+            <>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-border bg-muted/30">
+                      <th className="text-left px-4 py-3 text-xs font-medium text-muted-foreground">Korxona</th>
+                      <th className="text-left px-4 py-3 text-xs font-medium text-muted-foreground">Turi</th>
+                      <th className="text-left px-4 py-3 text-xs font-medium text-muted-foreground hidden md:table-cell">Manzil</th>
+                      <th className="text-left px-4 py-3 text-xs font-medium text-muted-foreground hidden lg:table-cell">Telefon</th>
+                      <th className="text-left px-4 py-3 text-xs font-medium text-muted-foreground hidden lg:table-cell">Admin</th>
+                      <th className="text-right px-4 py-3 text-xs font-medium text-muted-foreground">Amallar</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {paginated.map((venue) => (
+                      <tr
+                        key={venue.id}
+                        onClick={() => setLocation(`/owner/venues/${venue.id}`)}
+                        className="border-b border-border hover:bg-muted/20 transition-colors cursor-pointer"
+                      >
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-3">
+                            <div className="w-8 h-8 rounded-lg bg-blue-600/10 flex items-center justify-center overflow-hidden shrink-0">
+                              {venue.logoUrl ? (
+                                <img src={venue.logoUrl} alt={venue.name} className="w-full h-full object-cover" />
+                              ) : (
+                                <Store className="h-4 w-4 text-blue-500" />
+                              )}
+                            </div>
+                            <span className="font-medium text-foreground truncate max-w-[200px]">{venue.name}</span>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3">
+                          <Badge variant="outline" className="text-xs capitalize border-border text-muted-foreground">
+                            {venue.type === "cafe" ? "Kafe" : "Restoran"}
+                          </Badge>
+                        </td>
+                        <td className="px-4 py-3 text-muted-foreground hidden md:table-cell truncate max-w-[180px]">
+                          {venue.address || "—"}
+                        </td>
+                        <td className="px-4 py-3 text-muted-foreground hidden lg:table-cell">{venue.phone || "—"}</td>
+                        <td className="px-4 py-3 hidden lg:table-cell">
+                          {venue.adminName ? (
+                            <span className="text-blue-400">{venue.adminName}</span>
+                          ) : (
+                            <span className="text-muted-foreground">—</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="text-red-500 hover:bg-red-500/10 h-8 w-8"
+                            onClick={(e) => handleDelete(venue.id, e)}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Pagination */}
+              <div className="flex items-center justify-between px-4 py-3 border-t border-border">
+                <p className="text-xs text-muted-foreground">
+                  {(page - 1) * perPage + 1}–{Math.min(page * perPage, filtered.length)} / {filtered.length}
+                </p>
+                <div className="flex items-center gap-1">
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="text-red-500 hover:bg-red-500/10"
-                    onClick={(e) => handleDelete(venue.id, e)}
+                    className="h-8 w-8"
+                    disabled={page <= 1}
+                    onClick={() => handlePageChange(page - 1)}
                   >
-                    <Trash2 className="h-4 w-4" />
+                    <ChevronLeft className="h-4 w-4" />
                   </Button>
-                  <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                  {Array.from({ length: Math.min(totalPages, 5) }, (_, i) => {
+                    const start = Math.max(1, Math.min(page - 2, totalPages - 4));
+                    const p = start + i;
+                    if (p > totalPages) return null;
+                    return (
+                      <Button
+                        key={p}
+                        variant={p === page ? "default" : "ghost"}
+                        size="icon"
+                        className="h-8 w-8 text-xs"
+                        onClick={() => handlePageChange(p)}
+                      >
+                        {p}
+                      </Button>
+                    );
+                  })}
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8"
+                    disabled={page >= totalPages}
+                    onClick={() => handlePageChange(page + 1)}
+                  >
+                    <ChevronRight className="h-4 w-4" />
+                  </Button>
                 </div>
-              </CardHeader>
-              <CardContent>
-                {venue.address && <p className="text-sm text-muted-foreground">{venue.address}</p>}
-                {venue.phone && <p className="text-sm text-muted-foreground">{venue.phone}</p>}
-                {venue.adminName ? (
-                  <p className="text-sm text-foreground mt-2">Admin: <span className="text-blue-400">{venue.adminName}</span></p>
-                ) : (
-                  <p className="text-sm text-muted-foreground mt-2">Admin tayinlanmagan</p>
-                )}
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      )}
+              </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="bg-card border-border text-foreground">
           <DialogHeader>
-            <DialogTitle>Yangi Filial Qo'shish</DialogTitle>
+            <DialogTitle>Yangi Korxona Qo'shish</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             <div>
@@ -190,7 +302,7 @@ export default function OwnerVenues() {
               <Input
                 value={form.name}
                 onChange={(e) => setForm({ ...form, name: e.target.value })}
-                placeholder="Filial nomi"
+                placeholder="Korxona nomi"
                 className="bg-input border-border mt-1"
               />
             </div>

@@ -3,8 +3,10 @@ import {
   useListWaiters,
   useCreateWaiter,
   useDeleteWaiter,
+  useUpdateWaiter,
   getListWaitersQueryKey,
 } from "@workspace/api-client-react";
+import type { WaiterUser, UpdateWaiterInput, CreateWaiterInput } from "@workspace/api-client-react";
 import { useAuth } from "@/hooks/use-auth";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -13,14 +15,13 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Trash2, Users, Eye, EyeOff, Phone } from "lucide-react";
+import { Plus, Trash2, Users, Eye, EyeOff, Phone, Pencil } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 const ROLES = [
   { value: "kassir", label: "Kassir", color: "bg-amber-500/10 text-amber-500 border-amber-500/30" },
   { value: "waiter", label: "Afitsiant", color: "bg-blue-500/10 text-blue-500 border-blue-500/30" },
   { value: "oshpaz", label: "Oshpaz", color: "bg-green-500/10 text-green-500 border-green-500/30" },
-  { value: "mangalchi", label: "Mangalchi", color: "bg-orange-500/10 text-orange-500 border-orange-500/30" },
   { value: "dastavkachi", label: "Dastavkachi", color: "bg-purple-500/10 text-purple-500 border-purple-500/30" },
 ] as const;
 
@@ -42,6 +43,7 @@ export default function AdminStaff() {
   const [form, setForm] = useState(emptyForm);
   const [showPass, setShowPass] = useState(false);
   const [filterRole, setFilterRole] = useState<string>("all");
+  const [editingStaff, setEditingStaff] = useState<WaiterUser | null>(null);
 
   const { data: staff, isLoading } = useListWaiters(venueId, {
     query: { enabled: !!venueId, queryKey: getListWaitersQueryKey(venueId) },
@@ -49,23 +51,46 @@ export default function AdminStaff() {
 
   const createStaff = useCreateWaiter();
   const deleteStaff = useDeleteWaiter();
+  const updateStaff = useUpdateWaiter();
 
   const invalidate = () => qc.invalidateQueries({ queryKey: getListWaitersQueryKey(venueId) });
 
   const filtered = (staff ?? []).filter((s) => filterRole === "all" || s.role === filterRole);
 
-  const handleOpen = () => {
+  const handleOpenCreate = () => {
+    setEditingStaff(null);
     setForm(emptyForm);
     setShowPass(false);
     setModal(true);
   };
 
-  const handleCreate = () => {
-    if (!form.username.trim() || !form.password) {
-      toast({ title: "Username va parol kerak", variant: "destructive" });
+  const handleOpenEdit = (w: WaiterUser) => {
+    setEditingStaff(w);
+    setForm({
+      username: w.username,
+      password: "",
+      name: w.name || "",
+      phone: w.phone || "",
+      role: (w.role as StaffRole) || "waiter",
+    });
+    setShowPass(false);
+    setModal(true);
+  };
+
+  const handleSave = () => {
+    if (!form.username.trim()) {
+      toast({ title: "Username kerak", variant: "destructive" });
       return;
     }
-    if (form.password.length < 4) {
+    if (!editingStaff && !form.password) {
+      toast({ title: "Parol kerak", variant: "destructive" });
+      return;
+    }
+    if (!editingStaff && form.password.length < 4) {
+      toast({ title: "Parol kamida 4 ta belgi bo'lishi kerak", variant: "destructive" });
+      return;
+    }
+    if (editingStaff && form.password && form.password.length < 4) {
       toast({ title: "Parol kamida 4 ta belgi bo'lishi kerak", variant: "destructive" });
       return;
     }
@@ -73,29 +98,55 @@ export default function AdminStaff() {
       toast({ title: "Ism familiya kerak", variant: "destructive" });
       return;
     }
-    createStaff.mutate(
-      {
-        venueId,
-        data: {
-          username: form.username.trim(),
-          password: form.password,
-          name: form.name.trim(),
-          phone: form.phone.trim() || undefined,
-          role: form.role,
+
+    if (editingStaff) {
+      const data: UpdateWaiterInput = {
+        username: form.username.trim(),
+        name: form.name.trim(),
+        phone: form.phone.trim() || undefined,
+        role: form.role,
+      };
+      if (form.password) data.password = form.password;
+      updateStaff.mutate(
+        { venueId, waiterId: editingStaff.id, data },
+        {
+          onSuccess: () => {
+            invalidate();
+            setModal(false);
+            setEditingStaff(null);
+            toast({ title: "Hodim tahrirlandi" });
+          },
+          onError: (err: any) => {
+            const msg = err?.data?.error ?? err?.message ?? "Xatolik yuz berdi";
+            toast({ title: msg, variant: "destructive" });
+          },
+        }
+      );
+    } else {
+      createStaff.mutate(
+        {
+          venueId,
+          data: {
+            username: form.username.trim(),
+            password: form.password,
+            name: form.name.trim(),
+            phone: form.phone.trim() || undefined,
+            role: form.role,
+          } satisfies CreateWaiterInput,
         },
-      },
-      {
-        onSuccess: () => {
-          invalidate();
-          setModal(false);
-          toast({ title: "Hodim qo'shildi" });
-        },
-        onError: (err: any) => {
-          const msg = err?.data?.error ?? err?.message ?? "Xatolik yuz berdi";
-          toast({ title: msg, variant: "destructive" });
-        },
-      }
-    );
+        {
+          onSuccess: () => {
+            invalidate();
+            setModal(false);
+            toast({ title: "Hodim qo'shildi" });
+          },
+          onError: (err: any) => {
+            const msg = err?.data?.error ?? err?.message ?? "Xatolik yuz berdi";
+            toast({ title: msg, variant: "destructive" });
+          },
+        }
+      );
+    }
   };
 
   const handleDelete = (id: number, name: string) => {
@@ -127,7 +178,7 @@ export default function AdminStaff() {
             {(staff ?? []).length} ta hodim
           </p>
         </div>
-        <Button className="bg-blue-600 hover:bg-blue-700 text-foreground" onClick={handleOpen}>
+        <Button className="bg-blue-600 hover:bg-blue-700 text-foreground" onClick={handleOpenCreate}>
           <Plus className="h-4 w-4 sm:mr-2" />
           <span className="hidden sm:inline">Hodim qo'shish</span>
         </Button>
@@ -168,7 +219,7 @@ export default function AdminStaff() {
           <Users className="h-16 w-16 mb-3 opacity-30" />
           <p className="text-lg font-medium">Hodim yo'q</p>
           <p className="text-sm mt-1">Birinchi hodimni qo'shing</p>
-          <Button className="mt-4 bg-blue-600 hover:bg-blue-700 text-foreground" onClick={handleOpen}>
+          <Button className="mt-4 bg-blue-600 hover:bg-blue-700 text-foreground" onClick={handleOpenCreate}>
             <Plus className="h-4 w-4 mr-2" />
             Qo'shish
           </Button>
@@ -211,15 +262,25 @@ export default function AdminStaff() {
                   {new Date(w.createdAt).toLocaleDateString("uz-UZ")}
                 </div>
 
-                {/* Delete */}
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => handleDelete(w.id, w.name || w.username)}
-                  className="text-red-500 hover:text-red-400 hover:bg-red-500/10 h-8 w-8 p-0"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </Button>
+                {/* Actions */}
+                <div className="flex items-center gap-1">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handleOpenEdit(w)}
+                    className="text-blue-500 hover:text-blue-400 hover:bg-blue-500/10 h-8 w-8 p-0"
+                  >
+                    <Pencil className="h-3.5 w-3.5" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handleDelete(w.id, w.name || w.username)}
+                    className="text-red-500 hover:text-red-400 hover:bg-red-500/10 h-8 w-8 p-0"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
               </div>
             );
           })}
@@ -227,10 +288,10 @@ export default function AdminStaff() {
       )}
 
       {/* Modal */}
-      <Dialog open={modal} onOpenChange={setModal}>
+      <Dialog open={modal} onOpenChange={(v) => { if (!v) setEditingStaff(null); setModal(v); }}>
         <DialogContent className="bg-card border-border text-foreground">
           <DialogHeader>
-            <DialogTitle>Yangi Hodim Qo'shish</DialogTitle>
+            <DialogTitle>{editingStaff ? "Hodimni Tahrirlash" : "Yangi Hodim Qo'shish"}</DialogTitle>
           </DialogHeader>
 
           <div className="space-y-4 py-2">
@@ -280,13 +341,13 @@ export default function AdminStaff() {
             </div>
 
             <div>
-              <Label className="text-zinc-300">Parol *</Label>
+              <Label className="text-zinc-300">{editingStaff ? "Yangi parol (ixtiyoriy)" : "Parol *"}</Label>
               <div className="relative mt-1.5">
                 <Input
                   type={showPass ? "text" : "password"}
                   value={form.password}
                   onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
-                  placeholder="Kamida 4 ta belgi"
+                  placeholder={editingStaff ? "O'zgartirish uchun kiriting" : "Kamida 4 ta belgi"}
                   className="bg-input border-border text-foreground pr-10"
                   autoComplete="new-password"
                 />
@@ -304,17 +365,17 @@ export default function AdminStaff() {
           <DialogFooter>
             <Button
               variant="outline"
-              onClick={() => setModal(false)}
+              onClick={() => { setModal(false); setEditingStaff(null); }}
               className="border-border text-foreground hover:bg-accent"
             >
               Bekor qilish
             </Button>
             <Button
-              onClick={handleCreate}
-              disabled={createStaff.isPending}
+              onClick={handleSave}
+              disabled={createStaff.isPending || updateStaff.isPending}
               className="bg-blue-600 hover:bg-blue-700 text-foreground"
             >
-              {createStaff.isPending ? "Saqlanmoqda..." : "Qo'shish"}
+              {createStaff.isPending || updateStaff.isPending ? "Saqlanmoqda..." : editingStaff ? "Saqlash" : "Qo'shish"}
             </Button>
           </DialogFooter>
         </DialogContent>

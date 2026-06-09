@@ -810,7 +810,7 @@ components:
           type: ["string", "null"]
         role:
           type: string
-          enum: [owner, admin, kassir, waiter, oshpaz, mangalchi, dastavkachi]
+          enum: [owner, admin, kassir, waiter, oshpaz, dastavkachi]
         venueId:
           type: ["integer", "null"]
         venueName:
@@ -832,7 +832,7 @@ components:
           type: string
         role:
           type: string
-          enum: [owner, admin, kassir, waiter, oshpaz, mangalchi, dastavkachi]
+          enum: [owner, admin, kassir, waiter, oshpaz, dastavkachi]
         venueId:
           type: ["integer", "null"]
 

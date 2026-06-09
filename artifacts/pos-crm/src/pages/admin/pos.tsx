@@ -19,6 +19,7 @@ import {
   type ActiveOrder,
 } from "@workspace/api-client-react";
 import { useAuth } from "@/hooks/use-auth";
+import { useVenueSettings } from "@/hooks/use-venue-settings";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -66,6 +67,7 @@ type CartItem = {
 type ReceiptData = {
   orderId: number;
   venueName: string;
+  venueLogoUrl?: string;
   items: CartItem[];
   subtotal: number;
   totalDiscount: number;
@@ -107,7 +109,7 @@ function fmt(n: number) {
 }
 
 /* ── Thermal Fiscal Receipt ──────────────────────────────── */
-function ThermalReceipt({ data, onClose }: { data: ReceiptData; onClose: () => void }) {
+function ThermalReceipt({ data, onClose, showQr, showLogo }: { data: ReceiptData; onClose: () => void; showQr: boolean; showLogo: boolean }) {
   const receiptRef = useRef<HTMLDivElement>(null);
   const dateStr = data.date.toLocaleString("uz-UZ", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
   const checkNum = String(data.orderId).padStart(6, "0");
@@ -139,15 +141,11 @@ function ThermalReceipt({ data, onClose }: { data: ReceiptData; onClose: () => v
       <title>CHEK #${checkNum}</title>
       <style>
         * { margin:0; padding:0; box-sizing:border-box; }
-        @page { size: 58mm auto; margin: 0; }
-        @media print {
-          html, body { width: 58mm; }
-        }
+        @page { margin: 0; }
         body {
           font-family: 'Courier New', 'Courier', monospace;
           font-size: 10px;
-          width: 58mm;
-          max-width: 58mm;
+          max-width: 100%;
           background: #fff;
           color: #000;
           padding: 2mm 3mm;
@@ -194,9 +192,16 @@ function ThermalReceipt({ data, onClose }: { data: ReceiptData; onClose: () => v
           <div
             ref={receiptRef}
             className="bg-white mx-auto p-3 shadow-inner"
-            style={{ fontFamily: "'Courier New', monospace", fontSize: "10px", width: "220px", color: "#000", lineHeight: "1.35" }}
+            style={{ fontFamily: "'Courier New', monospace", fontSize: "10px", maxWidth: "300px", color: "#000", lineHeight: "1.35" }}
           >
             <div style={{ textAlign: "center", marginBottom: "2px" }}>
+              {showLogo && data.venueLogoUrl && (
+                <img
+                  src={data.venueLogoUrl}
+                  alt={data.venueName}
+                  style={{ maxWidth: "80px", maxHeight: "40px", margin: "0 auto 4px", objectFit: "contain" }}
+                />
+              )}
               <div style={{ fontWeight: "bold", fontSize: "14px", letterSpacing: "1px" }}>
                 {data.venueName.toUpperCase()}
               </div>
@@ -283,10 +288,14 @@ function ThermalReceipt({ data, onClose }: { data: ReceiptData; onClose: () => v
               </div>
             )}
             <Dash />
-            <div style={{ display: "flex", justifyContent: "center", margin: "4px 0" }}>
-              <QRCodeSVG value={qrData} size={72} level="M" />
-            </div>
-            <div style={{ textAlign: "center", fontSize: "8px", color: "#555" }}>Chekni skaner qiling</div>
+            {showQr && (
+              <>
+                <div style={{ display: "flex", justifyContent: "center", margin: "4px 0" }}>
+                  <QRCodeSVG value={qrData} size={72} level="M" />
+                </div>
+                <div style={{ textAlign: "center", fontSize: "8px", color: "#555" }}>Chekni skaner qiling</div>
+              </>
+            )}
             <Solid />
             <div style={{ textAlign: "center", fontSize: "9px", marginTop: "3px" }}>
               <div style={{ fontWeight: "bold" }}>✦ XARID UCHUN RAHMAT ✦</div>
@@ -548,6 +557,16 @@ type RoomBooking = {
 export default function AdminPos() {
   const { user, token } = useAuth();
   const venueId = user?.venueId ?? 0;
+  const { data: settings } = useVenueSettings();
+  const { data: venue } = useQuery({
+    queryKey: ["venue", venueId],
+    enabled: !!venueId && !!token && user?.role !== "waiter",
+    queryFn: async () => {
+      const r = await fetch(`/api/venues/${venueId}`, { headers: { Authorization: `Bearer ${token}` } });
+      if (!r.ok) throw new Error("Failed");
+      return r.json();
+    },
+  });
   const { data: products } = useListProducts(venueId, { query: { enabled: !!venueId, queryKey: getListProductsQueryKey(venueId) } });
   const { data: customers } = useListCustomers(venueId, { query: { enabled: !!venueId, queryKey: getListCustomersQueryKey(venueId) } });
 
@@ -594,6 +613,9 @@ export default function AdminPos() {
   const [showDebtPanel, setShowDebtPanel] = useState(false);
   const [showSplitPanel, setShowSplitPanel] = useState(false);
   const [receipt, setReceipt] = useState<ReceiptData | null>(null);
+  const [onlinePayOrder, setOnlinePayOrder] = useState<ActiveOrder | null>(null);
+  const [onlineDebtOrder, setOnlineDebtOrder] = useState<ActiveOrder | null>(null);
+  const [onlineSplitOrder, setOnlineSplitOrder] = useState<ActiveOrder | null>(null);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [showTablePanel, setShowTablePanel] = useState(false);
   const [tableSelection, setTableSelection] = useState<TableSelection>({ roomId: null, roomName: null, tableId: null, tableNumber: null });
@@ -626,6 +648,10 @@ export default function AdminPos() {
   /* Load open order items into cart */
   const loadOpenOrder = (order: ActiveOrder) => {
     if (!products) return;
+    if (order.waiterId && !order.waiterClosed) {
+      toast({ title: "Hali afitsiant buyurtmani yopmadi", variant: "destructive" });
+      return;
+    }
     const newCart: CartItem[] = order.items
       .map((item) => {
         const product = products.find((p) => p.id === item.productId);
@@ -710,6 +736,7 @@ export default function AdminPos() {
       setReceipt({
         orderId: order.id,
         venueName: user?.venueName ?? "Kafe",
+        venueLogoUrl: venue?.logoUrl,
         items: [...cart],
         subtotal, totalDiscount, total,
         payType: opts.payType,
@@ -726,6 +753,11 @@ export default function AdminPos() {
 
     /* If there's an active open order, close it via the open orders endpoint */
     if (activeOpenOrderId) {
+      const activeOrder = openOrders?.find((o) => o.id === activeOpenOrderId);
+      if (activeOrder?.waiterId && !activeOrder.waiterClosed) {
+        toast({ title: "Hali afitsiant buyurtmani yopmadi", variant: "destructive" });
+        return;
+      }
       payOpenOrder.mutate(
         {
           venueId,
@@ -800,8 +832,67 @@ export default function AdminPos() {
     });
   };
 
+  /* ── Online buyurtmani to'lash ─────────────────────────── */
+  const handleOnlinePay = (order: ActiveOrder, apiPayType: "cash" | "card" | "debt", splitPayment?: SplitPayment, customer?: { id?: number; name: string; phone?: string }) => {
+    const apiSplit = splitPayment && apiPayType === "debt"
+      ? {
+          ...(splitPayment.cash > 0 && { cash: splitPayment.cash }),
+          ...(splitPayment.card > 0 && { card: splitPayment.card }),
+          ...(splitPayment.debt > 0 && { debt: splitPayment.debt }),
+        }
+      : undefined;
+
+    const notesPart = `Onlayn buyurtma #${order.id}`;
+    payOpenOrder.mutate(
+      {
+        venueId,
+        orderId: order.id,
+        data: {
+          paymentType: apiPayType,
+          paymentSplit: apiSplit,
+          customerId: customer?.id ?? null,
+          notes: customer ? `${notesPart}, Mijoz: ${customer.name}` : notesPart,
+          items: order.items.map((i) => ({
+            productId: i.productId,
+            quantity: i.quantity,
+            discountPct: 0,
+          })),
+        },
+      },
+      {
+        onSuccess: () => {
+          setReceipt({
+            orderId: order.id,
+            venueName: user?.venueName ?? "Kafe",
+            venueLogoUrl: venue?.logoUrl,
+            items: order.items.map((i) => ({
+              product: { id: i.productId, name: i.productName, price: i.unitPrice, category: "", description: "", isAvailable: true, venueId: 0 } as Product,
+              quantity: i.quantity,
+              discount: 0,
+              unit: "dona",
+            })),
+            subtotal: order.totalAmount,
+            totalDiscount: 0,
+            total: order.totalAmount,
+            payType: apiPayType === "cash" ? "naxt" : apiPayType === "card" ? "karta" : "qarz",
+            splitPayment,
+            customerName: customer?.name,
+            date: new Date(),
+          });
+          setOnlinePayOrder(null);
+          setOnlineDebtOrder(null);
+          setOnlineSplitOrder(null);
+        },
+        onError: () => toast({ title: "Xatolik yuz berdi", variant: "destructive" }),
+      }
+    );
+  };
+
   const isPaying = createOrder.isPending || payOpenOrder.isPending;
   const [mobileTab, setMobileTab] = useState<"cart" | "payment">("cart");
+
+  const regularOpenOrders = useMemo(() => (openOrders ?? []).filter((o) => o.source !== "online"), [openOrders]);
+  const onlineOpenOrders = useMemo(() => (openOrders ?? []).filter((o) => o.source === "online"), [openOrders]);
 
   return (
     <div className="flex flex-col h-[calc(100svh-56px)] md:h-[calc(100vh-0px)] gap-0 overflow-hidden -m-4 md:-m-6 lg:-m-8">
@@ -918,7 +1009,75 @@ export default function AdminPos() {
             )}
           </div>
 
-          {/* Category tabs + Product grid + Cart */}
+          {/* Cart items — between search and products */}
+          {cart.length > 0 && (
+            <div className="border-b border-border bg-zinc-200 dark:bg-zinc-900">
+              <div className="px-4 py-2.5 max-h-[30vh] overflow-y-auto">
+                <div className="flex items-center justify-between mb-1.5">
+                  <h3 className="text-xs font-semibold text-foreground flex items-center gap-1">
+                    <ShoppingBag className="h-3.5 w-3.5" />
+                    Savat ({cartCount} ta)
+                  </h3>
+                  <button onClick={clearCart} className="text-[11px] text-red-400 hover:text-red-300">Tozalash</button>
+                </div>
+                <div className="space-y-1.5">
+                  {cart.map((item, idx) => {
+                    const lineTotal = itemTotal(item);
+                    return (
+                      <div key={item.product.id} className="bg-card border border-border rounded-lg p-2">
+                        <div className="flex items-start justify-between mb-1">
+                          <div className="flex items-start gap-1.5 min-w-0">
+                            {(item.product as any).imageUrl ? (
+                              <img src={(item.product as any).imageUrl} alt="" className="w-7 h-7 rounded object-cover shrink-0 mt-0.5" />
+                            ) : (
+                              <div className="w-7 h-7 rounded bg-zinc-300 dark:bg-zinc-800 flex items-center justify-center shrink-0 mt-0.5">
+                                <span className="text-sm opacity-40">🍽️</span>
+                              </div>
+                            )}
+                            <div className="min-w-0">
+                              <span className="text-xs text-muted-foreground mr-0.5">{idx + 1}.</span>
+                              <span className="text-foreground font-semibold text-xs leading-tight">{item.product.name}</span>
+                            </div>
+                          </div>
+                          <button onClick={() => removeItem(item.product.id)} className="text-red-500 hover:bg-red-500/10 rounded p-0.5 ml-1 shrink-0">
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <div className="flex items-center bg-muted rounded overflow-hidden">
+                            <button
+                              onClick={() => updateItem(item.product.id, { quantity: Math.max(1, item.quantity - 1) })}
+                              className="px-1.5 py-1 text-foreground hover:bg-zinc-300 dark:hover:bg-zinc-700"
+                            >
+                              <Minus className="h-3 w-3" />
+                            </button>
+                            <input
+                              type="number"
+                              value={item.quantity}
+                              onChange={(e) => updateItem(item.product.id, { quantity: Math.max(1, parseInt(e.target.value) || 1) })}
+                              className="w-8 text-center bg-transparent text-foreground text-xs font-semibold focus:outline-none"
+                            />
+                            <button
+                              onClick={() => updateItem(item.product.id, { quantity: item.quantity + 1 })}
+                              className="px-1.5 py-1 text-foreground hover:bg-zinc-300 dark:hover:bg-zinc-700"
+                            >
+                              <Plus className="h-3 w-3" />
+                            </button>
+                          </div>
+                          <div className="ml-auto text-right">
+                            {item.discount > 0 && <p className="text-[10px] text-muted-foreground line-through">{fmt(item.product.price * item.quantity)} so'm</p>}
+                            <p className="text-foreground font-bold text-xs">{fmt(lineTotal)} so'm</p>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Category tabs + Product grid */}
           <div className="flex-1 overflow-y-auto" onClick={() => setShowSuggestions(false)}>
             {/* Category tabs */}
             {categories.length > 1 && (
@@ -939,130 +1098,106 @@ export default function AdminPos() {
               </div>
             )}
 
-            {/* Product grid */}
+            {/* Product grid — grouped by category when "Barchasi" is selected */}
             <div className="px-4 pb-3">
               {filteredProducts.length === 0 && search.length > 0 ? (
                 <p className="text-sm text-muted-foreground text-center py-6">"<b>{search}</b>" bo'yicha mahsulot topilmadi</p>
               ) : filteredProducts.length > 0 ? (
-                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2.5">
-                  {filteredProducts.map((product) => {
-                    const inCart = cart.find((i) => i.product.id === product.id);
-                    const unit = (product as any).unit || "";
-                    const stock = (product as any).stock as number | null;
-                    return (
-                      <button
-                        key={product.id}
-                        onClick={() => addProduct(product)}
-                        className={`relative flex flex-col items-start p-2.5 rounded-xl border text-left transition-all active:scale-[0.97] ${
-                          inCart
-                            ? "border-blue-500/50 bg-blue-600/10"
-                            : "border-border bg-card hover:border-border/80 hover:bg-accent/50"
-                        }`}
-                      >
-                        {inCart && (
-                          <span className="absolute top-2 right-2 w-5 h-5 bg-blue-600 text-white text-[10px] font-bold rounded-full flex items-center justify-center leading-none z-10">
-                            {inCart.quantity}
-                          </span>
-                        )}
-                        {(product as any).imageUrl ? (
-                          <img
-                            src={(product as any).imageUrl}
-                            alt={product.name}
-                            className="w-full aspect-square object-cover rounded-lg mb-2"
-                          />
-                        ) : (
-                          <div className="w-full aspect-square rounded-lg bg-zinc-300 dark:bg-zinc-800 flex items-center justify-center mb-2">
-                            <span className="text-2xl opacity-40">{(product as any)._isDirect ? "📦" : "🍽️"}</span>
-                          </div>
-                        )}
-                        <p className="text-sm font-semibold text-foreground leading-tight line-clamp-2">{product.name}</p>
-                        <div className="flex items-center gap-1.5 mt-0.5">
-                          {unit && <span className="text-[10px] px-1.5 py-0.5 bg-blue-500/10 text-blue-400 rounded font-medium">{unit}</span>}
-                          {stock != null && (
-                            <span className={`text-[10px] ${stock <= 5 ? "text-red-400" : "text-muted-foreground"}`}>{stock} ta</span>
-                          )}
-                        </div>
-                        <p className="text-sm font-bold text-blue-400 mt-1">{fmt(product.price)} so'm</p>
-                      </button>
-                    );
-                  })}
-                </div>
-              ) : null}
-            </div>
-
-            {/* Cart items */}
-            {cart.length > 0 && (
-              <div className="px-4 pb-4 border-t border-border pt-3">
-                <div className="flex items-center justify-between mb-2">
-                  <h3 className="text-sm font-semibold text-foreground flex items-center gap-1.5">
-                    <ShoppingBag className="h-4 w-4" />
-                    Savat ({cartCount} ta)
-                  </h3>
-                  <button onClick={clearCart} className="text-xs text-red-400 hover:text-red-300">Tozalash</button>
-                </div>
-                <div className="space-y-2">
-                  {cart.map((item, idx) => {
-                    const lineTotal = itemTotal(item);
-                    return (
-                      <div key={item.product.id} className="bg-card border border-border rounded-xl p-3">
-                        <div className="flex items-start justify-between mb-2">
-                          <div className="flex items-start gap-2">
-                            {(item.product as any).imageUrl ? (
-                              <img src={(item.product as any).imageUrl} alt="" className="w-9 h-9 rounded-lg object-cover shrink-0 mt-0.5" />
-                            ) : (
-                              <div className="w-9 h-9 rounded-lg bg-zinc-300 dark:bg-zinc-800 flex items-center justify-center shrink-0 mt-0.5">
-                                <span className="text-lg opacity-40">🍽️</span>
-                              </div>
-                            )}
-                            <div>
-                              <span className="text-xs text-muted-foreground mr-1">{idx + 1}.</span>
-                              <span className="text-foreground font-semibold text-sm">{item.product.name}</span>
-                              <span className="text-xs text-muted-foreground ml-2">{item.product.category}</span>
-                            </div>
-                          </div>
-                          <button onClick={() => removeItem(item.product.id)} className="text-red-500 hover:bg-red-500/10 rounded p-1 ml-2">
-                            <Trash2 className="h-4 w-4" />
-                          </button>
-                        </div>
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <div className="flex items-center bg-muted rounded-lg overflow-hidden">
-                            <button
-                              onClick={() => updateItem(item.product.id, { quantity: Math.max(1, item.quantity - 1) })}
-                              className="px-2 py-1.5 text-foreground hover:bg-zinc-300 dark:hover:bg-zinc-700"
-                            >
-                              <Minus className="h-3.5 w-3.5" />
-                            </button>
-                            <input type="number" value={item.quantity} onChange={(e) => updateItem(item.product.id, { quantity: Math.max(1, parseInt(e.target.value) || 1) })} className="w-10 text-center bg-transparent text-foreground text-sm font-semibold focus:outline-none" />
-                            <button
-                              onClick={() => updateItem(item.product.id, { quantity: item.quantity + 1 })}
-                              className="px-2 py-1.5 text-foreground hover:bg-zinc-300 dark:hover:bg-zinc-700"
-                            >
-                              <Plus className="h-3.5 w-3.5" />
-                            </button>
-                          </div>
-                          <select
-                            value={item.unit}
-                            onChange={(e) => updateItem(item.product.id, { unit: e.target.value as Unit })}
-                            className="bg-input border border-border text-foreground text-sm rounded-lg px-2 py-1.5 focus:outline-none"
-                          >
-                            {UNITS.map((u) => <option key={u.value} value={u.value}>{u.label}</option>)}
-                          </select>
-                          <div className="flex items-center gap-1 bg-muted rounded-lg px-2 py-1.5">
-                            <Percent className="h-3.5 w-3.5 text-muted-foreground" />
-                            <input type="number" value={item.discount} min={0} max={100} onChange={(e) => updateItem(item.product.id, { discount: Math.min(100, Math.max(0, parseInt(e.target.value) || 0)) })} className="w-10 text-center bg-transparent text-foreground text-sm focus:outline-none" placeholder="0" />
-                            <span className="text-muted-foreground text-xs">chegirma</span>
-                          </div>
-                          <div className="ml-auto text-right">
-                            {item.discount > 0 && <p className="text-xs text-muted-foreground line-through">{fmt(item.product.price * item.quantity)} so'm</p>}
-                            <p className="text-foreground font-bold">{fmt(lineTotal)} so'm</p>
-                          </div>
+                activeCategory === "Barchasi" && !search.trim() ? (
+                  (() => {
+                    const grouped: Record<string, any[]> = {};
+                    filteredProducts.forEach((p) => {
+                      const cat = p.category || "Boshqa";
+                      if (!grouped[cat]) grouped[cat] = [];
+                      grouped[cat].push(p);
+                    });
+                    return Object.entries(grouped).map(([cat, prods]) => (
+                      <div key={cat} className="mb-5">
+                        <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-2.5 px-0.5">{cat}</h3>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2.5">
+                          {prods.map((product: any) => {
+                            const inCart = cart.find((i) => i.product.id === product.id);
+                            const unit = product.unit || "";
+                            return (
+                              <button
+                                key={product.id}
+                                onClick={() => addProduct(product)}
+                                className={`relative flex flex-col items-start p-2.5 rounded-xl border text-left transition-all active:scale-[0.97] ${
+                                  inCart
+                                    ? "border-blue-500/50 bg-blue-600/10"
+                                    : "border-border bg-card hover:border-border/80 hover:bg-accent/50"
+                                }`}
+                              >
+                                {inCart && (
+                                  <span className="absolute top-2 right-2 w-5 h-5 bg-blue-600 text-white text-[10px] font-bold rounded-full flex items-center justify-center leading-none z-10">
+                                    {inCart.quantity}
+                                  </span>
+                                )}
+                                {product.imageUrl ? (
+                                  <img
+                                    src={product.imageUrl}
+                                    alt={product.name}
+                                    className="w-full aspect-square object-cover rounded-lg mb-2"
+                                  />
+                                ) : (
+                                  <div className="w-full aspect-square rounded-lg bg-zinc-300 dark:bg-zinc-800 flex items-center justify-center mb-2">
+                                    <span className="text-2xl opacity-40">{product._isDirect ? "📦" : "🍽️"}</span>
+                                  </div>
+                                )}
+                                <p className="text-sm font-semibold text-foreground leading-tight line-clamp-2">{product.name}</p>
+                                {unit && <span className="text-[10px] px-1.5 py-0.5 bg-blue-500/10 text-blue-400 rounded font-medium mt-0.5">{unit}</span>}
+                                <p className="text-sm font-bold text-blue-400 mt-1">{fmt(product.price)} so'm</p>
+                              </button>
+                            );
+                          })}
                         </div>
                       </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
+                    ));
+                  })()
+                ) : (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2.5">
+                    {filteredProducts.map((product: any) => {
+                      const inCart = cart.find((i) => i.product.id === product.id);
+                      const unit = product.unit || "";
+                      return (
+                        <button
+                          key={product.id}
+                          onClick={() => addProduct(product)}
+                          className={`relative flex flex-col items-start p-2.5 rounded-xl border text-left transition-all active:scale-[0.97] ${
+                            inCart
+                              ? "border-blue-500/50 bg-blue-600/10"
+                              : "border-border bg-card hover:border-border/80 hover:bg-accent/50"
+                          }`}
+                        >
+                          {inCart && (
+                            <span className="absolute top-2 right-2 w-5 h-5 bg-blue-600 text-white text-[10px] font-bold rounded-full flex items-center justify-center leading-none z-10">
+                              {inCart.quantity}
+                            </span>
+                          )}
+                          {product.imageUrl ? (
+                            <img
+                              src={product.imageUrl}
+                              alt={product.name}
+                              className="w-full aspect-square object-cover rounded-lg mb-2"
+                            />
+                          ) : (
+                            <div className="w-full aspect-square rounded-lg bg-zinc-300 dark:bg-zinc-800 flex items-center justify-center mb-2">
+                              <span className="text-2xl opacity-40">{product._isDirect ? "📦" : "🍽️"}</span>
+                            </div>
+                          )}
+                          <p className="text-sm font-semibold text-foreground leading-tight line-clamp-2">{product.name}</p>
+                          <div className="flex items-center gap-1.5 mt-0.5">
+                            <span className="text-[10px] px-1.5 py-0.5 bg-zinc-500/10 text-muted-foreground rounded font-medium">{product.category}</span>
+                          </div>
+                          {unit && <span className="text-[10px] px-1.5 py-0.5 bg-blue-500/10 text-blue-400 rounded font-medium">{unit}</span>}
+                          <p className="text-sm font-bold text-blue-400 mt-1">{fmt(product.price)} so'm</p>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )
+              ) : null}
+            </div>
           </div>
         </div>
 
@@ -1132,15 +1267,64 @@ export default function AdminPos() {
             )}
           </div>
 
+          {/* Online Orders Section — "Onlayn Buyurtmalar" */}
+          {onlineOpenOrders.length > 0 && (
+            <div className="overflow-y-auto max-h-[40vh] border-b border-border">
+              <div className="px-4 pt-3 pb-1 flex items-center gap-1.5">
+                <ShoppingBag className="h-4 w-4 text-green-500" />
+                <span className="text-xs font-semibold text-green-500 uppercase tracking-wider">Onlayn Buyurtmalar</span>
+                <span className="bg-green-600 text-foreground text-xs rounded-full px-1.5 py-0.5 font-bold leading-none">
+                  {onlineOpenOrders.length}
+                </span>
+              </div>
+              <div className="px-3 pb-3 space-y-2 mt-1">
+                {onlineOpenOrders.map((order) => (
+                  <div
+                    key={order.id}
+                    className="rounded-xl border border-green-700/40 bg-green-950/20 p-3 transition-all hover:border-green-600/60"
+                  >
+                    <div className="flex items-start justify-between mb-1.5">
+                      <div>
+                        <div className="flex items-center gap-1.5">
+                          <ShoppingBag className="h-3.5 w-3.5 text-green-500" />
+                          <span className="text-sm font-semibold text-foreground">
+                            Buyurtma #{order.id}
+                          </span>
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          {new Date(order.createdAt).toLocaleString("uz-UZ", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
+                        </p>
+                      </div>
+                      <span className="text-sm font-bold text-foreground whitespace-nowrap">
+                        {fmt(order.totalAmount)} so'm
+                      </span>
+                    </div>
+                    <div className="text-xs text-muted-foreground mb-2">
+                      {order.items.length} mahsulot
+                      {order.items.slice(0, 2).map((i) => ` · ${i.productName} ×${i.quantity}`).join("")}
+                      {order.items.length > 2 && ` +${order.items.length - 2}`}
+                    </div>
+                    <button
+                      onClick={() => setOnlinePayOrder(order)}
+                      className="w-full py-1.5 rounded-lg text-xs font-semibold bg-green-600 text-white hover:bg-green-500 transition-colors"
+                    >
+                      To'lovni amalga oshirish
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Open Orders Section — "Ochiq Buyurtmalar" */}
           <div className="flex-1 overflow-y-auto">
             <div className="px-4 pt-3 pb-1 flex items-center justify-between">
               <div className="flex items-center gap-1.5">
                 <ClipboardList className="h-4 w-4 text-muted-foreground" />
                 <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Ochiq Buyurtmalar</span>
-                {(openOrders ?? []).length > 0 && (
+                {(regularOpenOrders ?? []).length > 0 && (
                   <span className="bg-red-600 text-foreground text-xs rounded-full px-1.5 py-0.5 font-bold leading-none">
-                    {(openOrders ?? []).length}
+                    {(regularOpenOrders ?? []).length}
                   </span>
                 )}
               </div>
@@ -1153,10 +1337,10 @@ export default function AdminPos() {
             </div>
 
             <div className="px-3 pb-3 space-y-2 mt-1">
-              {(openOrders ?? []).length === 0 ? (
+              {(regularOpenOrders ?? []).length === 0 ? (
                 <p className="text-xs text-zinc-700 text-center py-3">Ochiq buyurtma yo'q</p>
               ) : (
-                (openOrders ?? []).map((order) => (
+                (regularOpenOrders ?? []).map((order) => (
                   <div
                     key={order.id}
                     className={`rounded-xl border p-3 transition-all ${
@@ -1178,6 +1362,9 @@ export default function AdminPos() {
                         )}
                         {order.waiterName && (
                           <p className="text-xs text-muted-foreground">{order.waiterName}</p>
+                        )}
+                        {order.waiterClosed === false && order.waiterId && (
+                          <span className="text-[10px] text-amber-500 font-medium">Afitsiant yopmagan</span>
                         )}
                       </div>
                       <span className="text-sm font-bold text-foreground whitespace-nowrap">
@@ -1212,7 +1399,7 @@ export default function AdminPos() {
 
       {showDebtPanel && <DebtPanel total={total} customers={customers ?? []} venueId={venueId} onConfirm={handleDebtConfirm} onCancel={() => setShowDebtPanel(false)} qc={qc} />}
       {showSplitPanel && <SplitPaymentPanel total={total} customers={customers ?? []} venueId={venueId} onConfirm={handleSplitConfirm} onCancel={() => setShowSplitPanel(false)} qc={qc} />}
-      {receipt && <ThermalReceipt data={receipt} onClose={() => setReceipt(null)} />}
+      {receipt && <ThermalReceipt data={receipt} onClose={() => setReceipt(null)} showQr={settings?.receiptQrEnabled ?? true} showLogo={settings?.receiptLogoEnabled ?? true} />}
       {showTablePanel && (
         <TableSelectionPanel
           rooms={rooms ?? []}
@@ -1225,6 +1412,135 @@ export default function AdminPos() {
           onCancel={() => setShowTablePanel(false)}
         />
       )}
+
+      {/* Onlayn buyurtma to'lov modal */}
+      {onlinePayOrder && !onlineDebtOrder && !onlineSplitOrder && (
+        <OnlinePayModal
+          order={onlinePayOrder}
+          isPaying={payOpenOrder.isPending}
+          onCash={() => handleOnlinePay(onlinePayOrder, "cash")}
+          onCard={() => handleOnlinePay(onlinePayOrder, "card")}
+          onDebt={() => setOnlineDebtOrder(onlinePayOrder)}
+          onSplit={() => setOnlineSplitOrder(onlinePayOrder)}
+          onCancel={() => setOnlinePayOrder(null)}
+        />
+      )}
+      {onlineDebtOrder && (
+        <DebtPanel
+          total={onlineDebtOrder.totalAmount}
+          customers={customers ?? []}
+          venueId={venueId}
+          onConfirm={(info) => {
+            handleOnlinePay(onlineDebtOrder, "debt", undefined, { id: info.customerId, name: info.customerName, phone: info.phone });
+            setOnlineDebtOrder(null);
+          }}
+          onCancel={() => { setOnlineDebtOrder(null); }}
+          qc={qc}
+        />
+      )}
+      {onlineSplitOrder && (
+        <SplitPaymentPanel
+          total={onlineSplitOrder.totalAmount}
+          customers={customers ?? []}
+          venueId={venueId}
+          onConfirm={(split, customer) => {
+            handleOnlinePay(onlineSplitOrder, "debt", split, customer);
+            setOnlineSplitOrder(null);
+          }}
+          onCancel={() => { setOnlineSplitOrder(null); }}
+          qc={qc}
+        />
+      )}
+    </div>
+  );
+}
+
+/* ── Onlayn Buyurtma To'lov Modal ───────────────────────── */
+function OnlinePayModal({
+  order, isPaying, onCash, onCard, onDebt, onSplit, onCancel,
+}: {
+  order: ActiveOrder;
+  isPaying: boolean;
+  onCash: () => void;
+  onCard: () => void;
+  onDebt: () => void;
+  onSplit: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-40 flex flex-col justify-end" onClick={onCancel}>
+      <div
+        className="bg-zinc-200 dark:bg-zinc-900 border-t border-border rounded-t-2xl shadow-2xl p-5 max-w-lg mx-auto w-full max-h-[85vh] overflow-y-auto"
+        onClick={(e) => e.stopPropagation()}
+        style={{ animation: "slideUp 0.25s ease-out" }}
+      >
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2">
+            <ShoppingBag className="h-5 w-5 text-green-500" />
+            <h3 className="text-lg font-bold text-foreground">Onlayn Buyurtma #{order.id}</h3>
+          </div>
+          <button onClick={onCancel} className="text-muted-foreground hover:text-foreground"><X className="h-5 w-5" /></button>
+        </div>
+
+        <p className="text-xs text-muted-foreground mb-3">
+          {new Date(order.createdAt).toLocaleString("uz-UZ", {
+            day: "2-digit", month: "2-digit", year: "numeric",
+            hour: "2-digit", minute: "2-digit",
+          })}
+        </p>
+
+        <div className="bg-muted rounded-xl p-3 mb-4 space-y-1.5 max-h-44 overflow-y-auto">
+          {order.items.map((item, i) => (
+            <div key={i} className="flex items-center justify-between text-sm">
+              <span className="text-foreground">
+                {i + 1}. {item.productName} <span className="text-muted-foreground">x{item.quantity}</span>
+              </span>
+              <span className="text-foreground font-medium">
+                {new Intl.NumberFormat("uz-UZ", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(item.unitPrice * item.quantity)} so'm
+              </span>
+            </div>
+          ))}
+        </div>
+
+        <div className="bg-card border border-border rounded-xl p-3 flex justify-between items-center mb-4">
+          <span className="text-muted-foreground text-sm">Jami:</span>
+          <span className="text-xl font-bold text-foreground">
+            {new Intl.NumberFormat("uz-UZ", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(order.totalAmount)} so'm
+          </span>
+        </div>
+
+        <div className="space-y-2.5">
+          <button
+            onClick={onCash}
+            disabled={isPaying}
+            className="w-full py-3 rounded-xl font-bold text-base bg-green-600 hover:bg-green-500 text-foreground transition-all disabled:opacity-50"
+          >
+            💵 Naqd Pul
+          </button>
+          <button
+            onClick={onCard}
+            disabled={isPaying}
+            className="w-full py-3 rounded-xl font-bold text-base bg-blue-600 hover:bg-blue-500 text-foreground transition-all disabled:opacity-50"
+          >
+            💳 Karta
+          </button>
+          <button
+            onClick={onDebt}
+            disabled={isPaying}
+            className="w-full py-3 rounded-xl font-bold text-base bg-red-600 hover:bg-red-500 text-foreground transition-all disabled:opacity-50"
+          >
+            📝 Qarzga
+          </button>
+          <button
+            onClick={onSplit}
+            disabled={isPaying}
+            className="w-full py-3 rounded-xl font-bold text-base bg-purple-600 hover:bg-purple-500 text-foreground transition-all disabled:opacity-50"
+          >
+            🔀 Aralash
+          </button>
+        </div>
+      </div>
+      <style>{`@keyframes slideUp{from{transform:translateY(100%);opacity:0}to{transform:translateY(0);opacity:1}}`}</style>
     </div>
   );
 }

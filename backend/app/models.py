@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     DateTime,
     ForeignKey,
@@ -26,9 +27,23 @@ class User(Base):
     username: Mapped[str] = mapped_column(String, unique=True, nullable=False)
     password_hash: Mapped[str] = mapped_column("password_hash", Text, nullable=False)
     name: Mapped[str | None] = mapped_column(Text, nullable=True)
-    role: Mapped[str] = mapped_column(String, nullable=False, default="admin")  # owner|admin|kassir|waiter|oshpaz|mangalchi|dastavkachi
+    role: Mapped[str] = mapped_column(String, nullable=False, default="admin")  # owner|admin|kassir|waiter|oshpaz|dastavkachi
     phone: Mapped[str | None] = mapped_column("phone", Text, nullable=True)
     venue_id: Mapped[int | None] = mapped_column("venue_id", Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        "created_at",
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        server_default=func.now(),
+    )
+
+
+class UserTelegram(Base):
+    __tablename__ = "user_telegram"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column("user_id", Integer, nullable=False, unique=True)
+    chat_id: Mapped[int] = mapped_column("chat_id", BigInteger, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         "created_at",
         DateTime(timezone=True),
@@ -159,6 +174,7 @@ class Order(Base):
     venue_id: Mapped[int] = mapped_column("venue_id", Integer, nullable=False)
     customer_id: Mapped[int | None] = mapped_column("customer_id", Integer, nullable=True)
     waiter_id: Mapped[int | None] = mapped_column("waiter_id", Integer, nullable=True)
+    chef_id: Mapped[int | None] = mapped_column("chef_id", Integer, nullable=True)
     room_id: Mapped[int | None] = mapped_column("room_id", Integer, nullable=True)
     table_id: Mapped[int | None] = mapped_column("table_id", Integer, nullable=True)
     table_number: Mapped[int | None] = mapped_column("table_number", Integer, nullable=True)
@@ -166,7 +182,9 @@ class Order(Base):
     total_amount: Mapped[float] = mapped_column("total_amount", Numeric(12, 2), nullable=False)
     payment_type: Mapped[str] = mapped_column("payment_type", String, nullable=False, default="cash")
     payment_split: Mapped[str | None] = mapped_column("payment_split", Text, nullable=True)  # JSON string
-    status: Mapped[str] = mapped_column(String, nullable=False, default="completed")  # open|completed|debt|cancelled
+    status: Mapped[str] = mapped_column(String, nullable=False, default="completed")  # open|preparing|ready|completed|debt|cancelled
+    source: Mapped[str] = mapped_column(String, nullable=False, default="pos")  # pos|online
+    waiter_closed: Mapped[bool] = mapped_column("waiter_closed", Boolean, nullable=False, default=False)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         "created_at",
@@ -200,6 +218,8 @@ class OrderItem(Base):
     unit_price: Mapped[float] = mapped_column("unit_price", Numeric(12, 2), nullable=False)
     discount_pct: Mapped[float] = mapped_column("discount_pct", Numeric(5, 2), nullable=False, default=0)
     total: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
+    batch_number: Mapped[int | None] = mapped_column("batch_number", Integer, nullable=True, default=None)
+    item_status: Mapped[str] = mapped_column("item_status", String, nullable=False, default="draft")
 
     order: Mapped[Order] = relationship(back_populates="items")
 
@@ -379,7 +399,8 @@ class OnlineOrder(Base):
     delivery_type: Mapped[str] = mapped_column(String, nullable=False, default="pickup")  # pickup|delivery
     latitude: Mapped[float | None] = mapped_column("latitude", Numeric(10, 7), nullable=True)
     longitude: Mapped[float | None] = mapped_column("longitude", Numeric(10, 7), nullable=True)
-    accepted_by: Mapped[int | None] = mapped_column("accepted_by", Integer, nullable=True)  # kassir/oshpaz user_id
+    accepted_by: Mapped[int | None] = mapped_column("accepted_by", Integer, nullable=True)  # dastavkachi user_id (who accepted)
+    chef_id: Mapped[int | None] = mapped_column("chef_id", Integer, nullable=True)  # oshpaz user_id (who started preparing)
     courier_id: Mapped[int | None] = mapped_column("courier_id", Integer, nullable=True)
     pos_order_id: Mapped[int | None] = mapped_column("pos_order_id", Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -397,20 +418,87 @@ class OnlineOrder(Base):
 
 
 class TelegramCustomer(Base):
-    """Telegram bot orqali ro'yxatdan o'tgan mijozlar."""
     __tablename__ = "telegram_customers"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     venue_id: Mapped[int] = mapped_column("venue_id", Integer, nullable=False)
     telegram_user_id: Mapped[str] = mapped_column("telegram_user_id", String, nullable=False)
-    telegram_username: Mapped[str | None] = mapped_column("telegram_username", Text, nullable=True)
-    first_name: Mapped[str | None] = mapped_column("first_name", Text, nullable=True)
-    last_name: Mapped[str | None] = mapped_column("last_name", Text, nullable=True)
-    phone: Mapped[str | None] = mapped_column(Text, nullable=True)
+    telegram_username: Mapped[str | None] = mapped_column("telegram_username", String, nullable=True)
+    first_name: Mapped[str | None] = mapped_column("first_name", String, nullable=True)
+    last_name: Mapped[str | None] = mapped_column("last_name", String, nullable=True)
+    phone: Mapped[str | None] = mapped_column("phone", String, nullable=True)
     photo_url: Mapped[str | None] = mapped_column("photo_url", Text, nullable=True)
-    language: Mapped[str] = mapped_column(String, nullable=False, default="uz")  # uz|ru
-    chat_id: Mapped[str] = mapped_column("chat_id", String, nullable=False)
-    is_registered: Mapped[bool] = mapped_column("is_registered", Boolean, nullable=False, default=False)
+    language: Mapped[str | None] = mapped_column("language", String, nullable=True)
+    chat_id: Mapped[str | None] = mapped_column("chat_id", String, nullable=True)
+    is_registered: Mapped[bool] = mapped_column("is_registered", Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(
+        "created_at",
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        server_default=func.now(),
+    )
+
+
+class TariffPlan(Base):
+    __tablename__ = "tariff_plans"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    monthly_price: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False, default=0)
+    yearly_price: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False, default=0)
+    max_products: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    max_staff: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    features_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    trial_days: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        "created_at",
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        server_default=func.now(),
+    )
+
+
+class VenueSubscription(Base):
+    __tablename__ = "venue_subscriptions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    venue_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    tariff_plan_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    start_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    end_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False, default="active")
+    billing_cycle: Mapped[str] = mapped_column(Text, nullable=False, default="monthly")
+    auto_renew: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        "created_at",
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        "updated_at",
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        server_default=func.now(),
+    )
+
+
+class Payment(Base):
+    __tablename__ = "payments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    venue_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    subscription_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    amount: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
+    currency: Mapped[str] = mapped_column(Text, nullable=False, default="UZS")
+    status: Mapped[str] = mapped_column(Text, nullable=False, default="paid")
+    payment_method: Mapped[str | None] = mapped_column(Text, nullable=True)
+    billing_cycle: Mapped[str] = mapped_column(Text, nullable=False, default="monthly")
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         "created_at",
         DateTime(timezone=True),

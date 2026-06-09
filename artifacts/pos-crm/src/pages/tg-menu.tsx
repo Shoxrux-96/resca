@@ -3,6 +3,13 @@ import { ShoppingCart, Plus, Minus, X, Search, Send, Clock, Menu, MapPin, Naviga
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 
+delete (L.Icon.Default.prototype as any)._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png",
+  iconUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png",
+  shadowUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
+});
+
 declare global {
   interface Window {
     Telegram?: {
@@ -24,8 +31,14 @@ type Venue = {
   id: number;
   name: string;
   type: string;
+  logoUrl?: string | null;
   address?: string | null;
   phone?: string | null;
+  instagram?: string | null;
+  telegram?: string | null;
+  facebook?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
 };
 
 type CartItem = { product: Product; quantity: number };
@@ -110,15 +123,12 @@ export default function TelegramMenu() {
   const mapRef = useRef<HTMLDivElement>(null);
   const leafletRef = useRef<L.Map | null>(null);
   const markerRef = useRef<L.Marker | null>(null);
-  const venueMapRef = useRef<HTMLDivElement>(null);
-  const venueLeafletRef = useRef<L.Map | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState<number | null>(null);
   const [orders, setOrders] = useState<Order[]>([]);
   const [ordersLoading, setOrdersLoading] = useState(false);
-  const [receiptOrder, setReceiptOrder] = useState<Order | null>(null);
-  const [receiptDetail, setReceiptDetail] = useState<any>(null);
-  const [receiptLoading, setReceiptLoading] = useState(false);
+  const [receipts, setReceipts] = useState<Record<number, any>>({});
+  const [receiptLoading, setReceiptLoading] = useState<Record<number, boolean>>({});
 
   // URL: /tg-menu/<venueId>
   const venueId = (() => {
@@ -130,6 +140,12 @@ export default function TelegramMenu() {
 
   const tg = window.Telegram?.WebApp;
   const tgUserId = tg?.initDataUnsafe?.user?.id ? String(tg.initDataUnsafe.user.id) : null;
+  const deviceId = (() => {
+    let d = localStorage.getItem("tg_device_id");
+    if (!d) { d = crypto.randomUUID(); localStorage.setItem("tg_device_id", d); }
+    return d;
+  })();
+  const effectiveUserId = tgUserId || deviceId;
 
   // Telegram WebApp init
   useEffect(() => {
@@ -261,37 +277,17 @@ export default function TelegramMenu() {
     };
   }, [form.deliveryType]);
 
-  // Venue location map
-  useEffect(() => {
-    if (!data?.venue?.latitude || !data?.venue?.longitude || !venueMapRef.current) return;
-    // Clean up previous instance
-    if (venueLeafletRef.current) {
-      venueLeafletRef.current.remove();
-      venueLeafletRef.current = null;
-    }
-    const map = L.map(venueMapRef.current).setView([data.venue.latitude, data.venue.longitude], 15);
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-      attribution: "&copy; OpenStreetMap",
-    }).addTo(map);
-    L.marker([data.venue.latitude, data.venue.longitude]).addTo(map);
-    venueLeafletRef.current = map;
-    return () => {
-      venueLeafletRef.current?.remove();
-      venueLeafletRef.current = null;
-    };
-  }, [data, data?.venue?.latitude, data?.venue?.longitude, tab]);
-
   // Load history when tab changes to history
   useEffect(() => {
-    if (tab === "history" && tgUserId && venueId) {
+    if (tab === "history" && effectiveUserId && venueId) {
       setOrdersLoading(true);
-      fetch(`/api/public/online-orders/${venueId}/history?telegram_user_id=${encodeURIComponent(tgUserId)}`)
+      fetch(`/api/public/online-orders/${venueId}/history?telegram_user_id=${encodeURIComponent(effectiveUserId)}`)
         .then((r) => r.ok ? r.json() : [])
         .then(setOrders)
         .catch(() => setOrders([]))
         .finally(() => setOrdersLoading(false));
     }
-  }, [tab, tgUserId, venueId]);
+  }, [tab, effectiveUserId, venueId]);
 
   const products = data?.products ?? [];
   const categories = useMemo(() => {
@@ -325,24 +321,21 @@ export default function TelegramMenu() {
   const cartTotal = cart.reduce((s, i) => s + i.product.price * i.quantity, 0);
   const cartCount = cart.reduce((s, i) => s + i.quantity, 0);
 
-  const fetchReceipt = async (o: Order) => {
+  const toggleReceipt = async (o: Order) => {
     if (!o.posOrderId || !data?.venue?.id) return;
-    setReceiptOrder(o);
-    setReceiptLoading(true);
-    setReceiptDetail(null);
+    if (receipts[o.id]) {
+      setReceipts((prev) => { const next = { ...prev }; delete next[o.id]; return next; });
+      return;
+    }
+    setReceiptLoading((prev) => ({ ...prev, [o.id]: true }));
     try {
       const r = await fetch(`/api/venues/${data.venue.id}/orders/${o.posOrderId}`);
       if (r.ok) {
         const detail = await r.json();
-        setReceiptDetail(detail);
+        setReceipts((prev) => ({ ...prev, [o.id]: detail }));
       }
     } catch {}
-    setReceiptLoading(false);
-  };
-
-  const closeReceipt = () => {
-    setReceiptOrder(null);
-    setReceiptDetail(null);
+    setReceiptLoading((prev) => ({ ...prev, [o.id]: false }));
   };
 
   const handleSubmit = async () => {
@@ -358,7 +351,7 @@ export default function TelegramMenu() {
           customerAddress: form.lat && form.lng ? `${form.lat.toFixed(6)}, ${form.lng.toFixed(6)}` : null,
           latitude: form.deliveryType === "delivery" ? form.lat : null,
           longitude: form.deliveryType === "delivery" ? form.lng : null,
-          telegramUserId: tgUserId,
+          telegramUserId: effectiveUserId,
           telegramUsername: tg?.initDataUnsafe?.user?.username || null,
           deliveryType: form.deliveryType,
           items: cart.map((c) => ({
@@ -377,8 +370,8 @@ export default function TelegramMenu() {
       setSubmitOpen(false);
       setTab("menu");
       // Buyurtma tarixini yangilash
-      if (tgUserId && venueId) {
-        fetch(`/api/public/online-orders/${venueId}/history?telegram_user_id=${encodeURIComponent(tgUserId)}`)
+      if (effectiveUserId && venueId) {
+        fetch(`/api/public/online-orders/${venueId}/history?telegram_user_id=${encodeURIComponent(effectiveUserId)}`)
           .then((r) => r.ok ? r.json() : [])
           .then(setOrders)
           .catch(() => {});
@@ -420,13 +413,68 @@ export default function TelegramMenu() {
     <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950 pb-16">
       {/* Header */}
       <div className="bg-white dark:bg-zinc-900 border-b border-zinc-200 dark:border-zinc-800 px-4 py-3 sticky top-0 z-10">
-        <h1 className="text-lg font-bold text-zinc-900 dark:text-zinc-100">{data.venue.name}</h1>
-        {data.venue.address && <p className="text-xs text-zinc-500 dark:text-zinc-400">{data.venue.address}</p>}
-        {data.venue.latitude && data.venue.longitude ? (
-          <div ref={venueMapRef} className="w-full h-28 rounded-lg overflow-hidden border border-zinc-200 dark:border-zinc-700 mt-2" />
-        ) : (
-          <div className="flex items-center gap-1.5 mt-2 text-xs text-zinc-400">
-            <MapPin className="h-3 w-3" /> Xaritada joylashuv mavjud emas
+        <div className="flex items-center gap-3 mb-1">
+          {data.venue.logoUrl ? (
+            <img
+              src={data.venue.logoUrl}
+              alt={data.venue.name}
+              className="w-10 h-10 rounded-lg object-cover shrink-0"
+            />
+          ) : (
+            <div className="w-10 h-10 rounded-lg bg-[#E0714F] flex items-center justify-center text-white text-sm font-bold shrink-0">
+              {data.venue.name.charAt(0).toUpperCase()}
+            </div>
+          )}
+          <div className="min-w-0">
+            <h1 className="text-lg font-bold text-zinc-900 dark:text-zinc-100 truncate">{data.venue.name}</h1>
+            {data.venue.latitude && data.venue.longitude ? (
+              <a
+                href={`https://www.google.com/maps?q=${data.venue.latitude},${data.venue.longitude}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs text-blue-600 dark:text-blue-400 hover:underline truncate inline-flex items-center gap-1"
+              >
+                <Navigation className="h-3 w-3 shrink-0" />
+                Google Maps da ochish
+              </a>
+            ) : (
+              <p className="text-xs text-zinc-400 truncate">Xaritada joylashuv mavjud emas</p>
+            )}
+          </div>
+        </div>
+        {/* Social links */}
+        {(data.venue.instagram || data.venue.telegram || data.venue.facebook) && (
+          <div className="flex items-center gap-2 mt-1.5">
+            {data.venue.instagram && (
+              <a
+                href={data.venue.instagram.startsWith("http") ? data.venue.instagram : `https://instagram.com/${data.venue.instagram.replace("@", "")}`}
+                target="_blank" rel="noopener noreferrer"
+                className="text-xs text-pink-600 dark:text-pink-400 hover:underline flex items-center gap-1"
+              >
+                <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z"/></svg>
+                Instagram
+              </a>
+            )}
+            {data.venue.telegram && (
+              <a
+                href={data.venue.telegram.startsWith("http") ? data.venue.telegram : `https://t.me/${data.venue.telegram.replace("@", "")}`}
+                target="_blank" rel="noopener noreferrer"
+                className="text-xs text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1"
+              >
+                <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="currentColor"><path d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z"/></svg>
+                Telegram
+              </a>
+            )}
+            {data.venue.facebook && (
+              <a
+                href={data.venue.facebook.startsWith("http") ? data.venue.facebook : `https://facebook.com/${data.venue.facebook}`}
+                target="_blank" rel="noopener noreferrer"
+                className="text-xs text-blue-800 dark:text-blue-300 hover:underline flex items-center gap-1"
+              >
+                <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="currentColor"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg>
+                Facebook
+              </a>
+            )}
           </div>
         )}
       </div>
@@ -467,40 +515,90 @@ export default function TelegramMenu() {
             </div>
           </div>
 
-          {/* Products grid */}
-          <div className="px-4 grid grid-cols-2 gap-3">
+          {/* Products grid — grouped by category when "Barchasi" is selected */}
+          <div className="px-4">
             {filtered.length === 0 ? (
               <p className="col-span-2 text-center py-12 text-zinc-500">Mahsulot topilmadi</p>
-            ) : filtered.map((p) => {
-              const inCart = cart.find((i) => i.product.id === p.id);
-              return (
-                <div key={p.id} className="bg-white dark:bg-zinc-900 rounded-xl overflow-hidden border border-zinc-200 dark:border-zinc-800">
-                  <div className="aspect-square bg-zinc-100 dark:bg-zinc-800 overflow-hidden">
-                    {p.imageUrl ? (
-                      <img src={p.imageUrl} alt={p.name} className="w-full h-full object-cover" />
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center text-3xl opacity-30">🍽️</div>
-                    )}
-                  </div>
-                  <div className="p-2.5">
-                    <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100 line-clamp-2 leading-tight">{p.name}</p>
-                    <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 truncate">{p.category}</p>
-                    <div className="flex items-center justify-between mt-2 gap-2">
-                      <p className="text-sm font-bold text-blue-600 dark:text-blue-400">{fmt(p.price)} so'm</p>
-                      {inCart ? (
-                        <div className="flex items-center gap-1.5 bg-blue-600 rounded-lg">
-                          <button onClick={() => updateQty(p.id, -1)} className="px-2 py-1 text-white"><Minus className="h-3 w-3" /></button>
-                          <span className="text-white text-sm font-bold min-w-4 text-center">{inCart.quantity}</span>
-                          <button onClick={() => updateQty(p.id, 1)} className="px-2 py-1 text-white"><Plus className="h-3 w-3" /></button>
-                        </div>
-                      ) : (
-                        <button onClick={() => addToCart(p)} className="w-7 h-7 rounded-lg bg-blue-600 text-white flex items-center justify-center"><Plus className="h-4 w-4" /></button>
-                      )}
+            ) : activeCat === "Barchasi" && !search.trim() ? (
+              (() => {
+                const grouped: Record<string, typeof filtered> = {};
+                filtered.forEach((p) => {
+                  const cat = p.category || "Boshqa";
+                  if (!grouped[cat]) grouped[cat] = [];
+                  grouped[cat].push(p);
+                });
+                return Object.entries(grouped).map(([cat, prods]) => (
+                  <div key={cat} className="mb-6">
+                    <h3 className="text-sm font-bold text-blue-600 dark:text-blue-400 mb-3 uppercase tracking-wider">{cat}</h3>
+                    <div className="grid grid-cols-2 gap-3">
+                      {prods.map((p) => {
+                        const inCart = cart.find((i) => i.product.id === p.id);
+                        return (
+                          <div key={p.id} className="bg-white dark:bg-zinc-900 rounded-xl overflow-hidden border border-zinc-200 dark:border-zinc-800">
+                            <div className="aspect-square bg-zinc-100 dark:bg-zinc-800 overflow-hidden">
+                              {p.imageUrl ? (
+                                <img src={p.imageUrl} alt={p.name} className="w-full h-full object-cover" />
+                              ) : (
+                                <div className="w-full h-full flex items-center justify-center text-3xl opacity-30">🍽️</div>
+                              )}
+                            </div>
+                            <div className="p-2.5">
+                              <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100 line-clamp-2 leading-tight">{p.name}</p>
+                              <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 truncate">{p.category}</p>
+                              <div className="flex items-center justify-between mt-2 gap-2">
+                                <p className="text-sm font-bold text-blue-600 dark:text-blue-400">{fmt(p.price)} so'm</p>
+                                {inCart ? (
+                                  <div className="flex items-center gap-1.5 bg-blue-600 rounded-lg">
+                                    <button onClick={() => updateQty(p.id, -1)} className="px-2 py-1 text-white"><Minus className="h-3 w-3" /></button>
+                                    <span className="text-white text-sm font-bold min-w-4 text-center">{inCart.quantity}</span>
+                                    <button onClick={() => updateQty(p.id, 1)} className="px-2 py-1 text-white"><Plus className="h-3 w-3" /></button>
+                                  </div>
+                                ) : (
+                                  <button onClick={() => addToCart(p)} className="w-7 h-7 rounded-lg bg-blue-600 text-white flex items-center justify-center"><Plus className="h-4 w-4" /></button>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
-                </div>
-              );
-            })}
+                ));
+              })()
+            ) : (
+              <div className="grid grid-cols-2 gap-3">
+                {filtered.map((p) => {
+                  const inCart = cart.find((i) => i.product.id === p.id);
+                  return (
+                    <div key={p.id} className="bg-white dark:bg-zinc-900 rounded-xl overflow-hidden border border-zinc-200 dark:border-zinc-800">
+                      <div className="aspect-square bg-zinc-100 dark:bg-zinc-800 overflow-hidden">
+                        {p.imageUrl ? (
+                          <img src={p.imageUrl} alt={p.name} className="w-full h-full object-cover" />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center text-3xl opacity-30">🍽️</div>
+                        )}
+                      </div>
+                      <div className="p-2.5">
+                        <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100 line-clamp-2 leading-tight">{p.name}</p>
+                        <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 truncate">{p.category}</p>
+                        <div className="flex items-center justify-between mt-2 gap-2">
+                          <p className="text-sm font-bold text-blue-600 dark:text-blue-400">{fmt(p.price)} so'm</p>
+                          {inCart ? (
+                            <div className="flex items-center gap-1.5 bg-blue-600 rounded-lg">
+                              <button onClick={() => updateQty(p.id, -1)} className="px-2 py-1 text-white"><Minus className="h-3 w-3" /></button>
+                              <span className="text-white text-sm font-bold min-w-4 text-center">{inCart.quantity}</span>
+                              <button onClick={() => updateQty(p.id, 1)} className="px-2 py-1 text-white"><Plus className="h-3 w-3" /></button>
+                            </div>
+                          ) : (
+                            <button onClick={() => addToCart(p)} className="w-7 h-7 rounded-lg bg-blue-600 text-white flex items-center justify-center"><Plus className="h-4 w-4" /></button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </>
       )}
@@ -609,15 +707,55 @@ export default function TelegramMenu() {
                       <span className="text-xs text-zinc-500">Jami</span>
                       {o.posOrderId && (
                         <button
-                          onClick={() => fetchReceipt(o)}
+                          onClick={() => toggleReceipt(o)}
                           className="text-[11px] px-2 py-0.5 rounded bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 font-medium"
                         >
-                          🧾 Chek
+                          {receipts[o.id] ? "🧾 Yopish" : "🧾 Chek"}
                         </button>
                       )}
                     </div>
                     <span className="text-sm font-bold text-blue-600 dark:text-blue-400">{fmt(o.totalAmount)} so'm</span>
                   </div>
+                  {receiptLoading[o.id] && (
+                    <div className="px-4 py-3 border-t border-zinc-200 dark:border-zinc-800 text-center text-xs text-zinc-500">
+                      Yuklanmoqda...
+                    </div>
+                  )}
+                  {receipts[o.id] && (
+                    <div className="px-4 py-3 border-t border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-800/30">
+                      <div className="text-center mb-3 border-b border-dashed border-zinc-300 dark:border-zinc-700 pb-2">
+                        <p className="text-sm font-bold text-zinc-900 dark:text-zinc-100">{data?.venue?.name || ""}</p>
+                        <p className="text-[10px] text-zinc-500 mt-0.5">
+                          Chek №{receipts[o.id].id} &middot;{" "}
+                          {new Date(receipts[o.id].createdAt).toLocaleString("uz-UZ", {
+                            day: "2-digit", month: "2-digit", year: "numeric",
+                            hour: "2-digit", minute: "2-digit",
+                          })}
+                        </p>
+                      </div>
+                      <div className="space-y-1 mb-3">
+                        <div className="flex justify-between text-[10px] text-zinc-400 uppercase font-semibold pb-1 border-b border-zinc-200 dark:border-zinc-800">
+                          <span>Mahsulot</span>
+                          <span>Miqdor Narxi Summa</span>
+                        </div>
+                        {receipts[o.id].items.map((it: any, i: number) => (
+                          <div key={i} className="flex justify-between text-xs">
+                            <span className="text-zinc-800 dark:text-zinc-200 truncate mr-2">{it.productName}</span>
+                            <span className="text-zinc-600 dark:text-zinc-400 shrink-0 text-right">
+                              {it.quantity} × {fmt(it.unitPrice)} = {fmt(it.total)}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="border-t border-dashed border-zinc-300 dark:border-zinc-700 pt-2 flex justify-between items-center">
+                        <span className="text-sm font-bold text-zinc-900 dark:text-zinc-100">JAMI</span>
+                        <span className="text-base font-bold text-blue-600 dark:text-blue-400">{fmt(receipts[o.id].totalAmount)} so'm</span>
+                      </div>
+                      <p className="text-[10px] text-zinc-400 text-center mt-3 border-t border-dashed border-zinc-300 dark:border-zinc-700 pt-2">
+                        {receipts[o.id].paymentType === "cash" ? "Naqt to'lov" : receipts[o.id].paymentType}
+                      </p>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -663,61 +801,6 @@ export default function TelegramMenu() {
         </div>
       </div>
 
-      {/* Receipt Modal */}
-      {receiptOrder && (
-        <div className="fixed inset-0 bg-black/60 z-30 flex items-end" onClick={closeReceipt}>
-          <div className="bg-white dark:bg-zinc-900 w-full max-h-[90vh] rounded-t-3xl overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-            <div className="px-4 py-3 border-b border-zinc-200 dark:border-zinc-800 flex items-center justify-between">
-              <h2 className="text-lg font-bold text-zinc-900 dark:text-zinc-100">🧾 Chek #{receiptOrder.id}</h2>
-              <button onClick={closeReceipt} className="p-2 -mr-2"><X className="h-5 w-5" /></button>
-            </div>
-            {receiptLoading ? (
-              <div className="p-8 text-center text-zinc-500 text-sm">Yuklanmoqda...</div>
-            ) : receiptDetail ? (
-              <div className="p-4">
-                {/* Receipt header */}
-                <div className="text-center mb-4 border-b border-dashed border-zinc-300 dark:border-zinc-700 pb-3">
-                  <p className="text-sm font-bold text-zinc-900 dark:text-zinc-100">{data?.venue?.name || ""}</p>
-                  <p className="text-[11px] text-zinc-500 mt-0.5">
-                    Chek №{receiptDetail.id} &middot;{" "}
-                    {new Date(receiptDetail.createdAt).toLocaleString("uz-UZ", {
-                      day: "2-digit", month: "2-digit", year: "numeric",
-                      hour: "2-digit", minute: "2-digit",
-                    })}
-                  </p>
-                  <p className="text-[11px] text-zinc-500">{receiptOrder.customerName}</p>
-                </div>
-                {/* Items */}
-                <div className="space-y-1.5 mb-4">
-                  <div className="flex justify-between text-[10px] text-zinc-400 uppercase font-semibold pb-1 border-b border-zinc-200 dark:border-zinc-800">
-                    <span>Mahsulot</span>
-                    <span>Miqdor Narxi Summa</span>
-                  </div>
-                  {receiptDetail.items.map((it: any, i: number) => (
-                    <div key={i} className="flex justify-between text-xs">
-                      <span className="text-zinc-800 dark:text-zinc-200 truncate mr-2">{it.productName}</span>
-                      <span className="text-zinc-600 dark:text-zinc-400 shrink-0 text-right">
-                        {it.quantity} × {fmt(it.unitPrice)} = {fmt(it.total)}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-                {/* Total */}
-                <div className="border-t border-dashed border-zinc-300 dark:border-zinc-700 pt-2 flex justify-between items-center">
-                  <span className="text-sm font-bold text-zinc-900 dark:text-zinc-100">JAMI</span>
-                  <span className="text-base font-bold text-blue-600 dark:text-blue-400">{fmt(receiptDetail.totalAmount)} so'm</span>
-                </div>
-                <p className="text-[10px] text-zinc-400 text-center mt-4 border-t border-dashed border-zinc-300 dark:border-zinc-700 pt-3">
-                  {receiptDetail.paymentType === "cash" ? "Naqt to'lov" : receiptDetail.paymentType}
-                </p>
-              </div>
-            ) : (
-              <div className="p-8 text-center text-zinc-500 text-sm">Chek topilmadi</div>
-            )}
-          </div>
-        </div>
-      )}
-
       {/* Submit Modal */}
       {submitOpen && (
         <div className="fixed inset-0 bg-black/60 z-30 flex items-end" onClick={() => setSubmitOpen(false)}>
@@ -762,9 +845,20 @@ export default function TelegramMenu() {
                   </div>
                   <div ref={mapRef} className="w-full h-72 sm:h-80 rounded-xl overflow-hidden border border-zinc-300 dark:border-zinc-700 shadow-inner" />
                   {form.lat && form.lng && (
-                    <p className="text-[10px] text-zinc-400 mt-1.5 flex items-center gap-1">
-                      <MapPin className="h-3 w-3" /> {form.lat.toFixed(6)}, {form.lng.toFixed(6)}
-                    </p>
+                    <div className="flex items-center justify-between mt-1.5">
+                      <p className="text-[10px] text-zinc-400 flex items-center gap-1">
+                        <MapPin className="h-3 w-3" /> {form.lat.toFixed(6)}, {form.lng.toFixed(6)}
+                      </p>
+                      <a
+                        href={`https://www.google.com/maps?q=${form.lat},${form.lng}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-[10px] text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1"
+                      >
+                        <Navigation className="h-3 w-3" />
+                        Google Maps
+                      </a>
+                    </div>
                   )}
                 </div>
               )}

@@ -7,7 +7,7 @@ from typing import Optional
 from fastapi import Depends, FastAPI, HTTPException, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from sqlalchemy import select, func, inspect, text
+from sqlalchemy import select, func, inspect, text, or_
 from sqlalchemy.orm import Session, joinedload
 
 from . import auth, models, schemas
@@ -47,6 +47,7 @@ def _startup() -> None:
     models.RoomBooking.__table__.create(bind=engine, checkfirst=True)
     _ensure_schema_migrations()
     _ensure_default_owner()
+    _seed_sample_users()
 
 
 def _ensure_schema_migrations() -> None:
@@ -83,8 +84,18 @@ def _ensure_schema_migrations() -> None:
         if "image_url" not in inv_cols:
             with engine.begin() as conn:
                 conn.execute(text("ALTER TABLE inventory_items ADD COLUMN image_url TEXT"))
+        # order_items jadvaliga batch_number va item_status ustunlarini backfill'dan oldin qo'shamiz
+        if "order_items" in existing_tables:
+            oi_cols = {col["name"] for col in inspector.get_columns("order_items")}
+            if "batch_number" not in oi_cols:
+                with engine.begin() as conn:
+                    conn.execute(text("ALTER TABLE order_items ADD COLUMN batch_number INTEGER"))
+            if "item_status" not in oi_cols:
+                with engine.begin() as conn:
+                    conn.execute(text("ALTER TABLE order_items ADD COLUMN item_status TEXT DEFAULT 'draft'"))
         # Eski mahsulotlar uchun boshlang'ich kirim tranzaksiyasi yaratish (xarajat hisobi uchun)
         _backfill_initial_transactions()
+        _backfill_recipe_deductions()
     if "venue_settings" not in existing_tables:
         models.VenueSettings.__table__.create(bind=engine, checkfirst=True)
     if "expenses" not in existing_tables:
@@ -95,12 +106,18 @@ def _ensure_schema_migrations() -> None:
         models.OnlineOrder.__table__.create(bind=engine, checkfirst=True)
     else:
         oo_cols = {col["name"] for col in inspector.get_columns("online_orders")}
+        if "telegram_user_id" not in oo_cols:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE online_orders ADD COLUMN telegram_user_id TEXT"))
         if "telegram_username" not in oo_cols:
             with engine.begin() as conn:
                 conn.execute(text("ALTER TABLE online_orders ADD COLUMN telegram_username TEXT"))
         if "pos_order_id" not in oo_cols:
             with engine.begin() as conn:
                 conn.execute(text("ALTER TABLE online_orders ADD COLUMN pos_order_id INTEGER"))
+        if "chef_id" not in oo_cols:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE online_orders ADD COLUMN chef_id INTEGER"))
     if "telegram_customers" not in existing_tables:
         models.TelegramCustomer.__table__.create(bind=engine, checkfirst=True)
     # Venue ga telegram_bot_token ustuni
@@ -108,6 +125,31 @@ def _ensure_schema_migrations() -> None:
     if "telegram_bot_token" not in venue_cols:
         with engine.begin() as conn:
             conn.execute(text("ALTER TABLE venues ADD COLUMN telegram_bot_token TEXT"))
+    # orders jadvaliga source ustuni
+    if "orders" in existing_tables:
+        orders_cols = {col["name"] for col in inspector.get_columns("orders")}
+        if "source" not in orders_cols:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE orders ADD COLUMN source TEXT DEFAULT 'pos'"))
+        if "chef_id" not in orders_cols:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE orders ADD COLUMN chef_id INTEGER"))
+        if "waiter_closed" not in orders_cols:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE orders ADD COLUMN waiter_closed BOOLEAN DEFAULT FALSE"))
+    # Tariff / Subscription / Payment tables
+    if "tariff_plans" not in existing_tables:
+        models.TariffPlan.__table__.create(bind=engine, checkfirst=True)
+    else:
+        tp_cols = {col["name"] for col in inspector.get_columns("tariff_plans")}
+        if "trial_days" not in tp_cols:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE tariff_plans ADD COLUMN trial_days INTEGER"))
+    if "venue_subscriptions" not in existing_tables:
+        models.VenueSubscription.__table__.create(bind=engine, checkfirst=True)
+    if "payments" not in existing_tables:
+        models.Payment.__table__.create(bind=engine, checkfirst=True)
+    _seed_tariff_plans()
 
 
 def _backfill_initial_transactions() -> None:
@@ -130,7 +172,7 @@ def _backfill_initial_transactions() -> None:
                         venue_id=item.venue_id,
                         name=item.name,
                         price=float(item.sell_price),
-                        category="Tayyor mahsulot",
+                        category=item.category or "Tayyor mahsulot",
                         image_url=item.image_url,
                         stock=int(float(item.quantity)) if float(item.quantity) > 0 else None,
                         is_available=True,
@@ -174,7 +216,92 @@ def _backfill_initial_transactions() -> None:
                 created_by=None,
                 created_at=item.created_at,
             ))
+        # Direct mahsulotlar uchun Product kategoriyasini inventardagi bilan sinxronlash
+        db.execute(
+            text("""
+                UPDATE products
+                SET category = inventory_items.category
+                FROM inventory_items
+                WHERE inventory_items.name = products.name
+                  AND inventory_items.item_type = 'direct'
+                  AND inventory_items.venue_id = products.venue_id
+                  AND products.category != inventory_items.category
+            """)
+        )
         db.commit()
+
+
+def _backfill_recipe_deductions() -> None:
+    """Avvalgi sotilgan buyurtmalar uchun retsept bo'yicha ombordan kamaytirish.
+    Bir marta ishga tushadi va har bir ingredient uchun qancha kamaytirish
+    kerakligini hisoblab, farqni amaldagi quantity'dan ayiradi.
+    """
+    from .db import session_scope as _ss
+    with _ss() as db:
+        venues = db.scalars(select(models.Venue)).all()
+        for venue in venues:
+            orders = db.scalars(
+                select(models.Order).where(
+                    models.Order.venue_id == venue.id,
+                    models.Order.status.in_(["completed", "debt"]),
+                )
+            ).all()
+            if not orders:
+                continue
+
+            expected_usage = {}
+            for order in orders:
+                for oi in order.items:
+                    product = db.get(models.Product, oi.product_id)
+                    if not product:
+                        continue
+                    qty_sold = float(oi.quantity)
+                    recipes = db.scalars(
+                        select(models.ProductRecipe).where(
+                            models.ProductRecipe.product_id == oi.product_id
+                        )
+                    ).all()
+                    if not recipes:
+                        continue
+                    for recipe in recipes:
+                        deduct = float(recipe.quantity) * qty_sold
+                        expected_usage[recipe.inventory_item_id] = (
+                            expected_usage.get(recipe.inventory_item_id, 0) + deduct
+                        )
+
+            if not expected_usage:
+                continue
+
+            now = datetime.now(timezone.utc)
+            for inv_item_id, total_qty in expected_usage.items():
+                already = float(db.scalar(
+                    select(func.coalesce(func.sum(models.InventoryTransaction.quantity), 0)).where(
+                        models.InventoryTransaction.item_id == inv_item_id,
+                        models.InventoryTransaction.type == "out",
+                    )
+                ) or 0)
+
+                missing = round(total_qty - already, 3)
+                if missing <= 0:
+                    continue
+
+                inv_item = db.get(models.InventoryItem, inv_item_id)
+                if not inv_item or inv_item.venue_id != venue.id:
+                    continue
+
+                old_qty = float(inv_item.quantity)
+                new_qty = max(0, old_qty - missing)
+                inv_item.quantity = new_qty
+                db.add(models.InventoryTransaction(
+                    venue_id=venue.id,
+                    item_id=inv_item.id,
+                    type="out",
+                    quantity=missing,
+                    note=f"Avvalgi sotuvlar: retsept bo'yicha {missing:.3f} {inv_item.unit} kamaytirildi",
+                    created_at=now,
+                ))
+
+            db.commit()
 
 
 def _ensure_default_owner() -> None:
@@ -202,6 +329,101 @@ def _ensure_default_owner() -> None:
         if not owner.name:
             owner.name = "Owner"
         db.add(owner)
+
+
+def _seed_sample_users() -> None:
+    """Namuna foydalanuvchilarni yaratadi (faqat rivojlantirish uchun)."""
+    with session_scope() as db:
+        venue = db.scalar(select(models.Venue).limit(1))
+        if not venue:
+            return
+        venue_id = venue.id
+        sample_users = [
+            ("Waiter1", "waiter123", "Afitsiant 1", "waiter"),
+            ("Waiter2", "waiter123", "Afitsiant 2", "waiter"),
+            ("Oshpaz1", "oshpaz123", "Oshpaz 1", "oshpaz"),
+            ("Oshpaz2", "oshpaz123", "Oshpaz 2", "oshpaz"),
+            ("Dastavkachi1", "dastavkachi123", "Dastavkachi 1", "dastavkachi"),
+            ("Dastavkachi2", "dastavkachi123", "Dastavkachi 2", "dastavkachi"),
+        ]
+        for username, password, name, role in sample_users:
+            existing = db.scalar(select(models.User).where(models.User.username == username))
+            if existing:
+                continue
+            db.add(models.User(
+                username=username,
+                password_hash=auth.hash_password(password),
+                name=name,
+                role=role,
+                venue_id=venue_id,
+            ))
+        db.commit()
+
+
+def _seed_tariff_plans() -> None:
+    """Default tariff planlarni yaratadi yoki yangilaydi."""
+    from .db import session_scope as _ss
+    with _ss() as db:
+        # Old plan nomlarini map qilish
+        old_names = {
+            "Boshlang'ich": "Free",
+            "Standart": "Standart",
+            "Premium": "Premium",
+        }
+        plans_data = [
+            dict(
+                name="Free",
+                description="10 kunlik bepul sinov muddati bilan barcha funksiyalar ochiq",
+                monthly_price=0,
+                yearly_price=0,
+                max_products=0,
+                max_staff=0,
+                features_json='["Barcha funksiyalar ochiq", "10 kun bepul"]',
+                trial_days=10,
+                is_active=True,
+            ),
+            dict(
+                name="Standart",
+                description="15 ta hodim va 100 xil mahsulot bilan barcha funksiyalar",
+                monthly_price=299000,
+                yearly_price=2990000,
+                max_products=100,
+                max_staff=15,
+                features_json='["Barcha funksiyalar ochiq", "15 ta hodim", "100 xil mahsulot", "Telegram bot", "Ombor hisobi", "To\'liq hisobotlar"]',
+                trial_days=None,
+                is_active=True,
+            ),
+            dict(
+                name="Premium",
+                description="Barcha funksiyalar ochiq va cheksiz",
+                monthly_price=599000,
+                yearly_price=5990000,
+                max_products=None,
+                max_staff=None,
+                features_json='["Barcha funksiyalar ochiq", "Cheksiz hodimlar", "Cheksiz mahsulotlar", "Telegram bot", "Ombor hisobi", "VIP qo\'llab-quvvatlash", "To\'liq hisobotlar"]',
+                trial_days=None,
+                is_active=True,
+            ),
+        ]
+        for pd in plans_data:
+            # Try old name first, then new name
+            plan = db.scalar(select(models.TariffPlan).where(
+                (models.TariffPlan.name == pd["name"]) |
+                (models.TariffPlan.name == {v: k for k, v in old_names.items()}.get(pd["name"], ""))
+            ).limit(1))
+            if plan:
+                for k, v in pd.items():
+                    setattr(plan, k, v)
+            else:
+                db.add(models.TariffPlan(**pd))
+        # Delete any remaining old-named plans not in the new set
+        new_names = {pd["name"] for pd in plans_data}
+        old_extra = [n for n in old_names if n not in new_names]
+        for on in old_extra:
+            leftover = db.scalar(select(models.TariffPlan).where(models.TariffPlan.name == on).limit(1))
+            if leftover and leftover.id not in [s.tariff_plan_id for s in db.scalars(select(models.VenueSubscription)).all()]:
+                db.delete(leftover)
+        db.commit()
 
 
 @app.get("/api/healthz", response_model=schemas.HealthStatus, tags=["health"])
@@ -371,6 +593,8 @@ def _order_item_to_open_item(i: models.OrderItem) -> schemas.OpenOrderItem:
         unitPrice=float(i.unit_price),
         discountPct=float(i.discount_pct),
         total=float(i.total),
+        batchNumber=i.batch_number,
+        itemStatus=i.item_status,
     )
 
 
@@ -384,7 +608,7 @@ async def list_venues(
 
 # --- Staff (admin/owner/kassir) ---
 
-STAFF_ROLES = ("kassir", "waiter", "oshpaz", "mangalchi", "dastavkachi")
+STAFF_ROLES = ("kassir", "waiter", "oshpaz", "dastavkachi")
 
 @app.get(
     "/api/venues/{venueId}/waiters",
@@ -451,6 +675,43 @@ async def create_staff(
     return schemas.WaiterUser(id=w.id, username=w.username, name=w.name, phone=w.phone, role=w.role, venueId=w.venue_id, createdAt=w.created_at)
 
 
+@app.put(
+    "/api/venues/{venueId}/waiters/{waiterId}",
+    response_model=schemas.WaiterUser,
+    tags=["staff"],
+)
+async def update_staff(
+    venueId: int,
+    waiterId: int,
+    payload: schemas.UpdateWaiterInput,
+    db: Session = Depends(get_db),
+    current_user: schemas.User = Depends(auth.get_current_user),
+) -> schemas.WaiterUser:
+    _require_venue_access(current_user, venueId)
+    _require_admin_or_owner(current_user)
+    w = db.get(models.User, waiterId)
+    if not w or w.venue_id != venueId or w.role not in STAFF_ROLES:
+        raise HTTPException(status_code=404, detail="Staff not found")
+    if payload.username is not None:
+        existing = db.scalar(select(models.User).where(models.User.username == payload.username, models.User.id != waiterId))
+        if existing:
+            raise HTTPException(status_code=409, detail="Username already exists")
+        w.username = payload.username
+    if payload.password is not None:
+        w.password_hash = auth.hash_password(payload.password)
+    if payload.name is not None:
+        w.name = payload.name
+    if payload.phone is not None:
+        w.phone = payload.phone
+    if payload.role is not None:
+        if payload.role not in STAFF_ROLES:
+            raise HTTPException(status_code=422, detail=f"Invalid staff role: {payload.role}")
+        w.role = payload.role
+    db.flush()
+    db.refresh(w)
+    return schemas.WaiterUser(id=w.id, username=w.username, name=w.name, phone=w.phone, role=w.role, venueId=w.venue_id, createdAt=w.created_at)
+
+
 @app.delete(
     "/api/venues/{venueId}/waiters/{waiterId}",
     status_code=status.HTTP_204_NO_CONTENT,
@@ -480,22 +741,48 @@ async def delete_staff(
 )
 async def list_open_orders(
     venueId: int,
+    status_filter: Optional[str] = None,
     db: Session = Depends(get_db),
     current_user: schemas.User = Depends(auth.get_current_user),
 ) -> list[schemas.ActiveOrder]:
     _require_venue_access(current_user, venueId)
-    orders = db.scalars(
-        select(models.Order)
-        .options(joinedload(models.Order.items))
-        .where(models.Order.venue_id == venueId, models.Order.status == "open")
-        .order_by(models.Order.id.desc())
-    ).unique().all()
+    q = select(models.Order).options(joinedload(models.Order.items)).where(
+        models.Order.venue_id == venueId,
+        models.Order.source != "online",
+    )
+
+    # Afitsiant faqat o'zi yaratgan buyurtmalarni ko'radi
+    if current_user.role == "waiter":
+        q = q.where(models.Order.waiter_id == current_user.id)
+
+    # Oshpaz faqat o'ziga biriktirilgan yoki biriktirilmagan buyurtmalarni ko'radi
+    if current_user.role == "oshpaz":
+        q = q.where(
+            or_(
+                models.Order.chef_id == current_user.id,
+                models.Order.chef_id.is_(None),
+            )
+        )
+
+    if status_filter and status_filter != "all":
+        q = q.where(models.Order.status == status_filter)
+    else:
+        q = q.where(models.Order.status.in_(["open", "preparing", "ready"]))
+    q = q.order_by(models.Order.id.desc())
+    orders = db.scalars(q).unique().all()
     result: list[schemas.ActiveOrder] = []
     for o in orders:
         waiter_name = None
         if o.waiter_id:
             w = db.get(models.User, o.waiter_id)
             waiter_name = (w.name or w.username) if w else None
+        # Oshpaz faqat oshxonaga yuborilgan item'larni ko'radi (draft emas)
+        items = o.items
+        if current_user.role == "oshpaz":
+            items = [i for i in items if i.item_status != "draft"]
+        # Agar oshpaz uchun hech qanday item qolmasa, buyurtmani ko'rsatmaymiz
+        if current_user.role == "oshpaz" and not items:
+            continue
         result.append(
             schemas.ActiveOrder(
                 id=o.id,
@@ -507,9 +794,12 @@ async def list_open_orders(
                 waiterId=o.waiter_id,
                 waiterName=waiter_name,
                 totalAmount=float(o.total_amount),
+                source=o.source,
+                status=o.status,
+                waiterClosed=bool(o.waiter_closed) if o.waiter_closed is not None else False,
                 notes=o.notes,
                 createdAt=o.created_at,
-                items=[_order_item_to_open_item(i) for i in o.items],
+                items=[_order_item_to_open_item(i) for i in items],
             )
         )
     return result
@@ -555,6 +845,27 @@ def _check_table_not_booked(db: Session, venue_id: int, table_id: int) -> None:
             )
 
 
+def _check_table_waiter_exclusivity(db: Session, venue_id: int, table_id: int, current_waiter_id: int, exclude_order_id: int | None = None) -> None:
+    """Bir stolga faqat bitta afitsiant xizmat ko'rsatishi mumkin."""
+    q = select(models.Order).where(
+        models.Order.venue_id == venue_id,
+        models.Order.table_id == table_id,
+        models.Order.waiter_id.isnot(None),
+        models.Order.waiter_closed == False,  # noqa: E712
+        models.Order.status.in_(["open", "preparing", "ready"]),
+    )
+    if exclude_order_id:
+        q = q.where(models.Order.id != exclude_order_id)
+    existing = db.scalar(q.limit(1))
+    if existing and existing.waiter_id != current_waiter_id:
+        other = db.get(models.User, existing.waiter_id)
+        other_name = (other.name or other.username) if other else "boshqa afitsiant"
+        raise HTTPException(
+            status_code=409,
+            detail=f"Bu stolga {other_name} xizmat ko'rsatmoqda",
+        )
+
+
 def _recalc_open_order_total(db: Session, venue_id: int, items: list[schemas.CreateOpenOrderItemInput]) -> tuple[float, list[models.OrderItem]]:
     model_items: list[models.OrderItem] = []
     total_amount = 0.0
@@ -593,13 +904,23 @@ async def create_open_order(
     current_user: schemas.User = Depends(auth.get_current_user),
 ) -> schemas.ActiveOrder:
     _require_venue_access(current_user, venueId)
+    # Chegirma ruxsatlarini tekshirish
+    has_discount = any((it.discountPct or 0) > 0 for it in payload.items)
+    if has_discount:
+        if current_user.role == "waiter":
+            _require_setting_enabled(db, venueId, "waiterGiveDiscount")
+        if current_user.role == "kassir":
+            _require_setting_enabled(db, venueId, "kassirGiveDiscount")
     if payload.tableId:
         _check_table_not_booked(db, venueId, payload.tableId)
+        if current_user.role == "waiter":
+            _check_table_waiter_exclusivity(db, venueId, payload.tableId, current_user.id)
     total_amount, model_items = _recalc_open_order_total(db, venueId, payload.items)
     order = models.Order(
         venue_id=venueId,
         customer_id=None,
         waiter_id=current_user.id if current_user.role == "waiter" else None,
+        waiter_closed=(current_user.role != "waiter"),  # waiter creates → closed=false; kassir/admin → closed=true
         room_id=payload.roomId,
         table_id=payload.tableId,
         table_number=payload.tableNumber,
@@ -619,6 +940,11 @@ async def create_open_order(
     db.refresh(order)
     order = db.scalar(select(models.Order).options(joinedload(models.Order.items)).where(models.Order.id == order.id))
     assert order
+    waiter_name = None
+    if order.waiter_id:
+        wu = db.get(models.User, order.waiter_id)
+        if wu:
+            waiter_name = wu.name or wu.username
     return schemas.ActiveOrder(
         id=order.id,
         venueId=order.venue_id,
@@ -627,11 +953,53 @@ async def create_open_order(
         roomId=order.room_id,
         roomName=order.room_name,
         waiterId=order.waiter_id,
-        waiterName=current_user.name or current_user.username if current_user.role == "waiter" else None,
+        waiterName=waiter_name,
         totalAmount=float(order.total_amount),
+        source=order.source,
+        status=order.status,
         notes=order.notes,
         createdAt=order.created_at,
         items=[_order_item_to_open_item(i) for i in order.items],
+    )
+
+
+@app.get("/api/venues/{venueId}/orders/{orderId}", response_model=schemas.OrderDetail, tags=["orders"])
+async def get_order_detail(
+    venueId: int,
+    orderId: int,
+    db: Session = Depends(get_db),
+    current_user: schemas.User = Depends(auth.get_current_user),
+) -> schemas.OrderDetail:
+    _require_venue_access(current_user, venueId)
+    o = db.scalar(select(models.Order).options(joinedload(models.Order.items)).where(models.Order.id == orderId, models.Order.venue_id == venueId))
+    if not o:
+        raise HTTPException(status_code=404, detail="Order not found")
+    customer_name = None
+    if o.customer_id:
+        c = db.get(models.Customer, o.customer_id)
+        customer_name = c.name if c else None
+    return schemas.OrderDetail(
+        id=o.id,
+        venueId=o.venue_id,
+        customerId=o.customer_id,
+        customerName=customer_name,
+        totalAmount=float(o.total_amount),
+        paymentType=o.payment_type,
+        status=o.status,
+        source=o.source,
+        notes=o.notes,
+        createdAt=o.created_at,
+        items=[
+            schemas.OrderItem(
+                productId=i.product_id,
+                productName=i.product_name,
+                quantity=i.quantity,
+                unitPrice=float(i.unit_price),
+                discountPct=float(i.discount_pct),
+                total=float(i.total),
+            )
+            for i in o.items
+        ],
     )
 
 
@@ -654,11 +1022,23 @@ async def update_open_order(
     if not order or order.status != "open":
         raise HTTPException(status_code=404, detail="Open order not found")
     if current_user.role == "waiter" and order.waiter_id and order.waiter_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Forbidden")
+        raise HTTPException(status_code=403, detail="Bu buyurtma sizga tegishli emas")
+    if current_user.role == "waiter" and order.waiter_closed:
+        raise HTTPException(status_code=403, detail="Buyurtma allaqachon yopilgan, kassirga topshirilgan")
+    # Chegirma ruxsatlarini tekshirish
+    has_discount = any((it.discountPct or 0) > 0 for it in payload.items)
+    if has_discount:
+        if current_user.role == "waiter":
+            _require_setting_enabled(db, venueId, "waiterGiveDiscount")
+        if current_user.role == "kassir":
+            _require_setting_enabled(db, venueId, "kassirGiveDiscount")
 
     total_amount, model_items = _recalc_open_order_total(db, venueId, payload.items)
     order.total_amount = total_amount
     order.notes = payload.notes
+    # Afitsiant buyurtmani yopmoqchi bo'lsa
+    if payload.waiterClosed and current_user.role == "waiter" and order.waiter_id == current_user.id:
+        order.waiter_closed = True
     # replace items
     for old in list(order.items):
         db.delete(old)
@@ -684,6 +1064,418 @@ async def update_open_order(
         waiterId=order.waiter_id,
         waiterName=waiter_name,
         totalAmount=float(order.total_amount),
+        source=order.source,
+        status=order.status,
+        notes=order.notes,
+        createdAt=order.created_at,
+        items=[_order_item_to_open_item(i) for i in order.items],
+    )
+
+
+@app.post(
+    "/api/venues/{venueId}/open-orders/{orderId}/items",
+    response_model=schemas.ActiveOrder,
+    status_code=status.HTTP_200_OK,
+    tags=["orders"],
+)
+async def add_items_to_open_order(
+    venueId: int,
+    orderId: int,
+    payload: schemas.UpdateOpenOrderInput,
+    db: Session = Depends(get_db),
+    current_user: schemas.User = Depends(auth.get_current_user),
+) -> schemas.ActiveOrder:
+    """Afitsiant mavjud buyurtmaga yangi mahsulotlar qo'shishi (avvalgilariga qo'shiladi, almashtirilmaydi)."""
+    _require_venue_access(current_user, venueId)
+    order = db.scalar(
+        select(models.Order).options(joinedload(models.Order.items)).where(models.Order.id == orderId, models.Order.venue_id == venueId)
+    )
+    if not order or order.status not in ("open", "preparing", "ready"):
+        raise HTTPException(status_code=404, detail="Open order not found")
+    if current_user.role == "waiter" and order.waiter_id and order.waiter_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Bu buyurtma sizga tegishli emas")
+    if order.waiter_closed:
+        raise HTTPException(status_code=403, detail="Buyurtma allaqachon yopilgan, kassirga topshirilgan")
+    # Chegirma ruxsatlarini tekshirish
+    has_discount = any((it.discountPct or 0) > 0 for it in payload.items)
+    if has_discount:
+        if current_user.role == "waiter":
+            _require_setting_enabled(db, venueId, "waiterGiveDiscount")
+        if current_user.role == "kassir":
+            _require_setting_enabled(db, venueId, "kassirGiveDiscount")
+
+    # Yangi mahsulotlarni qo'shish (avvalgilarini o'chirmay)
+    for it in payload.items:
+        p = db.get(models.Product, it.productId)
+        if not p or p.venue_id != venueId:
+            raise HTTPException(status_code=404, detail=f"Product {it.productId} not found")
+        unit_price = float(p.price)
+        discount_pct = float(it.discountPct or 0)
+        line_total = unit_price * it.quantity * (1.0 - discount_pct / 100.0)
+        order.total_amount = float(order.total_amount) + line_total
+        order.items.append(
+            models.OrderItem(
+                order_id=order.id,
+                product_id=p.id,
+                product_name=p.name,
+                quantity=it.quantity,
+                unit_price=unit_price,
+                discount_pct=discount_pct,
+                total=line_total,
+                batch_number=None,
+                item_status="draft",
+            )
+        )
+    if payload.notes:
+        order.notes = (order.notes or "") + ("; " + payload.notes if order.notes else payload.notes)
+    db.flush()
+    db.refresh(order)
+    order = db.scalar(select(models.Order).options(joinedload(models.Order.items)).where(models.Order.id == order.id))
+    assert order
+    waiter_name = None
+    if order.waiter_id:
+        w = db.get(models.User, order.waiter_id)
+        waiter_name = (w.name or w.username) if w else None
+    return schemas.ActiveOrder(
+        id=order.id,
+        venueId=order.venue_id,
+        tableId=order.table_id,
+        tableNumber=order.table_number,
+        roomId=order.room_id,
+        roomName=order.room_name,
+        waiterId=order.waiter_id,
+        waiterName=waiter_name,
+        totalAmount=float(order.total_amount),
+        source=order.source,
+        status=order.status,
+        waiterClosed=bool(order.waiter_closed),
+        notes=order.notes,
+        createdAt=order.created_at,
+        items=[_order_item_to_open_item(i) for i in order.items],
+    )
+
+
+@app.post(
+    "/api/venues/{venueId}/open-orders/{orderId}/send-batch",
+    response_model=schemas.ActiveOrder,
+    status_code=status.HTTP_200_OK,
+    tags=["orders"],
+)
+async def send_batch_to_kitchen(
+    venueId: int,
+    orderId: int,
+    payload: schemas.SendBatchInput,
+    db: Session = Depends(get_db),
+    current_user: schemas.User = Depends(auth.get_current_user),
+) -> schemas.ActiveOrder:
+    """Afitsiant draft items'larni oshxonaga yuboradi (batch yaratadi)."""
+    _require_venue_access(current_user, venueId)
+    order = db.scalar(
+        select(models.Order).options(joinedload(models.Order.items)).where(models.Order.id == orderId, models.Order.venue_id == venueId)
+    )
+    if not order or order.status not in ("open", "preparing", "ready"):
+        raise HTTPException(status_code=404, detail="Open order not found")
+    if current_user.role == "waiter" and order.waiter_id and order.waiter_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Bu buyurtma sizga tegishli emas")
+    if order.waiter_closed:
+        raise HTTPException(status_code=403, detail="Buyurtma allaqachon yopilgan")
+
+    draft_items = [i for i in order.items if i.item_status == "draft" and i.batch_number is None]
+    if not draft_items:
+        raise HTTPException(status_code=400, detail="Oshxonaga yuboriladigan mahsulotlar yo'q")
+
+    next_batch = (max((i.batch_number for i in order.items if i.batch_number is not None), default=0)) + 1
+    for item in draft_items:
+        item.batch_number = next_batch
+        item.item_status = "sent"
+
+    db.flush()
+    db.refresh(order)
+    order = db.scalar(select(models.Order).options(joinedload(models.Order.items)).where(models.Order.id == order.id))
+    assert order
+    waiter_name = None
+    if order.waiter_id:
+        w = db.get(models.User, order.waiter_id)
+        waiter_name = (w.name or w.username) if w else None
+    return schemas.ActiveOrder(
+        id=order.id,
+        venueId=order.venue_id,
+        tableId=order.table_id,
+        tableNumber=order.table_number,
+        roomId=order.room_id,
+        roomName=order.room_name,
+        waiterId=order.waiter_id,
+        waiterName=waiter_name,
+        totalAmount=float(order.total_amount),
+        source=order.source,
+        status=order.status,
+        waiterClosed=bool(order.waiter_closed),
+        notes=order.notes,
+        createdAt=order.created_at,
+        items=[_order_item_to_open_item(i) for i in order.items],
+    )
+
+
+@app.patch(
+    "/api/venues/{venueId}/open-orders/{orderId}/batch/{batchNumber}/status",
+    response_model=schemas.ActiveOrder,
+    tags=["orders"],
+)
+async def update_batch_status(
+    venueId: int,
+    orderId: int,
+    batchNumber: int,
+    payload: schemas.UpdateBatchStatusInput,
+    db: Session = Depends(get_db),
+    current_user: schemas.User = Depends(auth.get_current_user),
+) -> schemas.ActiveOrder:
+    """Oshpaz batch statusini o'zgartiradi (sent→preparing→ready)."""
+    _require_venue_access(current_user, venueId)
+    if current_user.role not in ("oshpaz", "admin", "owner"):
+        raise HTTPException(status_code=403, detail="Faqat oshpaz va admin batch holatini o'zgartira oladi")
+
+    order = db.scalar(
+        select(models.Order).options(joinedload(models.Order.items)).where(models.Order.id == orderId, models.Order.venue_id == venueId)
+    )
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    batch_items = [i for i in order.items if i.batch_number == batchNumber]
+    if not batch_items:
+        raise HTTPException(status_code=404, detail="Batch not found")
+
+    new_status = payload.status
+    allowed = {"sent": ["preparing"], "preparing": ["ready"]}
+    current_batch_status = batch_items[0].item_status
+    if current_batch_status not in allowed or new_status not in allowed[current_batch_status]:
+        raise HTTPException(status_code=400, detail=f"Holatni '{current_batch_status}' dan '{new_status}' ga o'zgartirish mumkin emas")
+
+    for item in batch_items:
+        item.item_status = new_status
+
+    # Agar oshpaz birinchi marta buyurtma olayotgan bo'lsa, chef_id ni belgilaymiz
+    if order.chef_id is None and current_user.role == "oshpaz":
+        order.chef_id = current_user.id
+
+    db.flush()
+    db.refresh(order)
+    order = db.scalar(select(models.Order).options(joinedload(models.Order.items)).where(models.Order.id == order.id))
+    assert order
+    waiter_name = None
+    if order.waiter_id:
+        w = db.get(models.User, order.waiter_id)
+        waiter_name = (w.name or w.username) if w else None
+    return schemas.ActiveOrder(
+        id=order.id,
+        venueId=order.venue_id,
+        tableId=order.table_id,
+        tableNumber=order.table_number,
+        roomId=order.room_id,
+        roomName=order.room_name,
+        waiterId=order.waiter_id,
+        waiterName=waiter_name,
+        totalAmount=float(order.total_amount),
+        source=order.source,
+        status=order.status,
+        waiterClosed=bool(order.waiter_closed),
+        notes=order.notes,
+        createdAt=order.created_at,
+        items=[_order_item_to_open_item(i) for i in order.items],
+    )
+
+
+@app.patch(
+    "/api/venues/{venueId}/open-orders/{orderId}/batch/{batchNumber}/serve",
+    response_model=schemas.ActiveOrder,
+    tags=["orders"],
+)
+async def serve_batch(
+    venueId: int,
+    orderId: int,
+    batchNumber: int,
+    db: Session = Depends(get_db),
+    current_user: schemas.User = Depends(auth.get_current_user),
+) -> schemas.ActiveOrder:
+    """Afitsiant batch'dagi mahsulotlarni yetkazib berganini belgilaydi."""
+    _require_venue_access(current_user, venueId)
+    if current_user.role != "waiter":
+        raise HTTPException(status_code=403, detail="Faqat afitsiant xizmat qilganini belgilay oladi")
+
+    order = db.scalar(
+        select(models.Order).options(joinedload(models.Order.items)).where(models.Order.id == orderId, models.Order.venue_id == venueId)
+    )
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    if order.waiter_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Bu buyurtma sizga tegishli emas")
+
+    batch_items = [i for i in order.items if i.batch_number == batchNumber]
+    if not batch_items:
+        raise HTTPException(status_code=404, detail="Batch not found")
+    if batch_items[0].item_status != "ready":
+        raise HTTPException(status_code=400, detail="Batch hali tayyor emas")
+
+    for item in batch_items:
+        item.item_status = "served"
+
+    db.flush()
+    db.refresh(order)
+    order = db.scalar(select(models.Order).options(joinedload(models.Order.items)).where(models.Order.id == order.id))
+    assert order
+    waiter_name = None
+    if order.waiter_id:
+        w = db.get(models.User, order.waiter_id)
+        waiter_name = (w.name or w.username) if w else None
+    return schemas.ActiveOrder(
+        id=order.id,
+        venueId=order.venue_id,
+        tableId=order.table_id,
+        tableNumber=order.table_number,
+        roomId=order.room_id,
+        roomName=order.room_name,
+        waiterId=order.waiter_id,
+        waiterName=waiter_name,
+        totalAmount=float(order.total_amount),
+        source=order.source,
+        status=order.status,
+        waiterClosed=bool(order.waiter_closed),
+        notes=order.notes,
+        createdAt=order.created_at,
+        items=[_order_item_to_open_item(i) for i in order.items],
+    )
+
+
+@app.delete(
+    "/api/venues/{venueId}/open-orders/{orderId}/items/{itemId}",
+    response_model=schemas.ActiveOrder,
+    tags=["orders"],
+)
+async def storno_order_item(
+    venueId: int,
+    orderId: int,
+    itemId: int,
+    payload: schemas.StornoItemInput,
+    db: Session = Depends(get_db),
+    current_user: schemas.User = Depends(auth.get_current_user),
+) -> schemas.ActiveOrder:
+    """Kassir buyurtma item'ini storno qiladi (miqdorni kamaytiradi yoki butunlay o'chiradi)."""
+    _require_venue_access(current_user, venueId)
+    if current_user.role not in ("kassir", "admin", "owner"):
+        raise HTTPException(status_code=403, detail="Faqat kassir va admin storno qila oladi")
+
+    order = db.scalar(
+        select(models.Order).options(joinedload(models.Order.items)).where(models.Order.id == orderId, models.Order.venue_id == venueId)
+    )
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    item = db.get(models.OrderItem, itemId)
+    if not item or item.order_id != order.id:
+        raise HTTPException(status_code=404, detail="Item not found")
+
+    storno_qty = payload.quantity
+    if storno_qty <= 0 or storno_qty > item.quantity:
+        raise HTTPException(status_code=422, detail=f"Storno miqdori 1 dan {item.quantity} gacha bo'lishi kerak")
+
+    if storno_qty == item.quantity:
+        # Butunlay o'chirish
+        order.total_amount = float(order.total_amount) - float(item.total)
+        db.delete(item)
+    else:
+        # Qisman storno
+        per_unit = float(item.total) / item.quantity
+        storno_total = per_unit * storno_qty
+        item.quantity -= storno_qty
+        item.total = float(item.total) - storno_total
+        order.total_amount = float(order.total_amount) - storno_total
+
+    # Omborga qaytarish
+    try:
+        _deduct_inventory_on_sale(db, venueId, [item], reverse=True)
+    except Exception:
+        pass
+
+    db.flush()
+    db.refresh(order)
+    order = db.scalar(select(models.Order).options(joinedload(models.Order.items)).where(models.Order.id == order.id))
+    assert order
+    waiter_name = None
+    if order.waiter_id:
+        w = db.get(models.User, order.waiter_id)
+        waiter_name = (w.name or w.username) if w else None
+    return schemas.ActiveOrder(
+        id=order.id,
+        venueId=order.venue_id,
+        tableId=order.table_id,
+        tableNumber=order.table_number,
+        roomId=order.room_id,
+        roomName=order.room_name,
+        waiterId=order.waiter_id,
+        waiterName=waiter_name,
+        totalAmount=float(order.total_amount),
+        source=order.source,
+        status=order.status,
+        waiterClosed=bool(order.waiter_closed),
+        notes=order.notes,
+        createdAt=order.created_at,
+        items=[_order_item_to_open_item(i) for i in order.items],
+    )
+
+
+@app.patch("/api/venues/{venueId}/orders/{orderId}/kitchen-status", tags=["orders"])
+async def update_order_kitchen_status(
+    venueId: int,
+    orderId: int,
+    payload: schemas.KitchenStatusUpdate,
+    db: Session = Depends(get_db),
+    current_user: schemas.User = Depends(auth.get_current_user),
+) -> schemas.ActiveOrder:
+    _require_venue_access(current_user, venueId)
+    if current_user.role not in ("oshpaz", "admin", "owner"):
+        raise HTTPException(status_code=403, detail="Faqat oshpaz va admin buyurtma holatini o'zgartira oladi")
+    
+    order = db.scalar(
+        select(models.Order).options(joinedload(models.Order.items)).where(models.Order.id == orderId, models.Order.venue_id == venueId)
+    )
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    if order.source not in ("pos",):
+        raise HTTPException(status_code=400, detail="Faqat oflayn buyurtmalar uchun")
+    
+    new_status = payload.status
+    allowed_transitions = {
+        "open": ["preparing"],
+        "preparing": ["ready"],
+        "ready": [],
+    }
+    if order.status not in allowed_transitions or new_status not in allowed_transitions[order.status]:
+        raise HTTPException(status_code=400, detail=f"Holatni '{order.status}' dan '{new_status}' ga o'zgartirish mumkin emas")
+    
+    order.status = new_status
+    # Oshpaz birinchi marta buyurtmani olganida chef_id ni belgilaymiz
+    if order.chef_id is None and current_user.role in ("oshpaz",):
+        order.chef_id = current_user.id
+    db.flush()
+    db.refresh(order)
+    order = db.scalar(select(models.Order).options(joinedload(models.Order.items)).where(models.Order.id == order.id))
+    assert order
+    
+    waiter_name = None
+    if order.waiter_id:
+        w = db.get(models.User, order.waiter_id)
+        waiter_name = (w.name or w.username) if w else None
+    return schemas.ActiveOrder(
+        id=order.id,
+        venueId=order.venue_id,
+        tableId=order.table_id,
+        tableNumber=order.table_number,
+        roomId=order.room_id,
+        roomName=order.room_name,
+        waiterId=order.waiter_id,
+        waiterName=waiter_name,
+        totalAmount=float(order.total_amount),
+        source=order.source,
+        status=order.status,
         notes=order.notes,
         createdAt=order.created_at,
         items=[_order_item_to_open_item(i) for i in order.items],
@@ -702,14 +1494,86 @@ async def cancel_open_order(
     current_user: schemas.User = Depends(auth.get_current_user),
 ) -> Response:
     _require_venue_access(current_user, venueId)
+    if current_user.role == "kassir":
+        _require_setting_enabled(db, venueId, "kassirCancelReceipt")
+    if current_user.role == "waiter":
+        _require_setting_enabled(db, venueId, "waiterCancelOrder")
     order = db.get(models.Order, orderId)
     if not order or order.venue_id != venueId or order.status != "open":
         return Response(status_code=status.HTTP_204_NO_CONTENT)
     if current_user.role == "waiter" and order.waiter_id and order.waiter_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Forbidden")
+        raise HTTPException(status_code=403, detail="Bu buyurtma sizga tegishli emas")
     order.status = "cancelled"
     db.add(order)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@app.patch(
+    "/api/venues/{venueId}/open-orders/{orderId}/waiter-close",
+    response_model=schemas.ActiveOrder,
+    tags=["orders"],
+)
+async def waiter_close_order(
+    venueId: int,
+    orderId: int,
+    db: Session = Depends(get_db),
+    current_user: schemas.User = Depends(auth.get_current_user),
+) -> schemas.ActiveOrder:
+    """Afitsiant stoldagi barcha ochiq buyurtmalarini yopadi (davomiy turlar)."""
+    _require_venue_access(current_user, venueId)
+    if current_user.role != "waiter":
+        raise HTTPException(status_code=403, detail="Faqat afitsiantlar yopishi mumkin")
+    order = db.get(models.Order, orderId)
+    if not order or order.venue_id != venueId or order.status not in ("open", "preparing", "ready"):
+        raise HTTPException(status_code=404, detail="Order not found")
+    if order.waiter_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Bu buyurtma sizga tegishli emas")
+
+    # Shu stoldagi afitsiantning barcha ochiq buyurtmalarini yopish
+    all_orders = db.scalars(
+        select(models.Order)
+        .options(joinedload(models.Order.items))
+        .where(
+            models.Order.venue_id == venueId,
+            models.Order.table_id == order.table_id,
+            models.Order.waiter_id == current_user.id,
+            models.Order.waiter_closed == False,
+            models.Order.status.in_(["open", "preparing", "ready"]),
+        )
+    ).unique().all()
+
+    if not all_orders:
+        raise HTTPException(status_code=404, detail="Open order not found")
+
+    for o in all_orders:
+        o.waiter_closed = True
+    db.flush()
+
+    # Birlashtirilgan ma'lumotlarni qaytarish
+    primary = all_orders[0]
+    all_items = []
+    for o in all_orders:
+        for i in o.items:
+            all_items.append(i)
+    total = sum(float(o.total_amount) for o in all_orders)
+    waiter_name = (current_user.name or current_user.username) if current_user else None
+    return schemas.ActiveOrder(
+        id=primary.id,
+        venueId=primary.venue_id,
+        tableId=primary.table_id,
+        tableNumber=primary.table_number,
+        roomId=primary.room_id,
+        roomName=primary.room_name,
+        waiterId=primary.waiter_id,
+        waiterName=waiter_name,
+        totalAmount=total,
+        source=primary.source,
+        status=primary.status,
+        waiterClosed=True,
+        notes=f"{len(all_orders)} ta tur",
+        createdAt=primary.created_at,
+        items=[_order_item_to_open_item(i) for i in all_items],
+    )
 
 
 @app.post(
@@ -725,13 +1589,121 @@ async def pay_open_order(
     current_user: schemas.User = Depends(auth.get_current_user),
 ) -> schemas.PayOpenOrderResult:
     _require_venue_access(current_user, venueId)
+    # Chegirma ruxsatlarini tekshirish
+    if payload.items:
+        has_discount = any((it.discountPct or 0) > 0 for it in payload.items)
+        if has_discount:
+            if current_user.role == "waiter":
+                _require_setting_enabled(db, venueId, "waiterGiveDiscount")
+            if current_user.role == "kassir":
+                _require_setting_enabled(db, venueId, "kassirGiveDiscount")
+
+    # Agar tableId berilgan bo'lsa, shu stoldagi barcha yopiq buyurtmalarni birlashtirib to'lash
+    if payload.tableId:
+        all_orders = db.scalars(
+            select(models.Order)
+            .options(joinedload(models.Order.items))
+            .where(
+                models.Order.venue_id == venueId,
+                models.Order.table_id == payload.tableId,
+                models.Order.waiter_closed == True,
+                models.Order.status.in_(["open", "preparing", "ready"]),
+            )
+            .order_by(models.Order.id)
+        ).unique().all()
+        if not all_orders:
+            raise HTTPException(status_code=404, detail="Bu stolda to'lanadigan buyurtmalar yo'q")
+        if current_user.role == "waiter" and any(o.waiter_id != current_user.id for o in all_orders):
+            raise HTTPException(status_code=403, detail="Bu buyurtmalar sizga tegishli emas")
+
+        total_amount = sum(float(o.total_amount) for o in all_orders)
+        for o in all_orders:
+            o.payment_type = payload.paymentType
+            o.payment_split = json.dumps(payload.paymentSplit) if payload.paymentSplit else None
+            o.notes = payload.notes or o.notes
+            o.customer_id = payload.customerId
+            o.status = "debt" if payload.paymentType == "debt" else "completed"
+        db.flush()
+
+        if payload.paymentType == "debt":
+            if not payload.customerId:
+                raise HTTPException(status_code=422, detail="customerId is required for debt payments")
+            debt_amount = total_amount
+            if payload.paymentSplit:
+                try:
+                    debt_amount = float(payload.paymentSplit.get("debt") or 0)
+                except Exception:
+                    debt_amount = total_amount
+            if debt_amount <= 0:
+                debt_amount = total_amount
+            for o in all_orders:
+                debt = db.scalar(select(models.Debt).where(models.Debt.order_id == o.id))
+                if debt is None:
+                    db.add(
+                        models.Debt(
+                            venue_id=venueId,
+                            customer_id=payload.customerId,
+                            order_id=o.id,
+                            amount=debt_amount / len(all_orders),
+                            paid_amount=0,
+                            status="unpaid",
+                            paid_at=None,
+                        )
+                    )
+
+        for o in all_orders:
+            if o.source != "online":
+                _deduct_inventory_on_sale(db, venueId, list(o.items))
+
+        try:
+            location_parts = []
+            if all_orders[0].room_name:
+                location_parts.append(all_orders[0].room_name)
+            if all_orders[0].table_number:
+                location_parts.append(f"Stol #{all_orders[0].table_number}")
+            location = " · ".join(location_parts)
+            first_order = all_orders[0]
+            order_ids = ", ".join(str(o.id) for o in all_orders)
+            items_str = _order_items_text(first_order.items) if first_order.items else ""
+            tg_body = f"Buyurtma #{order_ids}"
+            if location:
+                tg_body += f"\nJoy: {location}"
+            if items_str:
+                tg_body += f"\n\n{items_str}"
+            tg_body += f"\n\nJami: {total_amount:,.0f} so'm"
+            _send_push_notification(
+                db, venueId,
+                title=f"💰 Yangi sotuv (birlashtirilgan)",
+                body=f"Summa: {total_amount:,.0f} so'm · {len(all_orders)} ta buyurtma",
+                url="/admin/report",
+            )
+            _send_telegram_notification(
+                db, venueId,
+                title="Yangi sotuv (birlashtirilgan)",
+                body=tg_body,
+            )
+        except Exception:
+            pass
+
+        return schemas.PayOpenOrderResult(
+            id=all_orders[0].id,
+            status=all_orders[0].status,
+            totalAmount=total_amount,
+            orderCount=len(all_orders),
+        )
+
+    # Bitta buyurtmani to'lash (avvalgi holat)
     order = db.scalar(
         select(models.Order).options(joinedload(models.Order.items)).where(models.Order.id == orderId, models.Order.venue_id == venueId)
     )
-    if not order or order.status != "open":
+    if not order or order.status not in ("open", "preparing", "ready"):
         raise HTTPException(status_code=404, detail="Open order not found")
+    # Afitsiant buyurtmani yopmagan bo'lsa, kassir va admin to'lay olmaydi
+    if order.waiter_id and not order.waiter_closed and current_user.role != "owner":
+        if current_user.id != order.waiter_id:
+            raise HTTPException(status_code=403, detail="Buyurtma hali afitsiant tomonidan yopilmagan")
     if current_user.role == "waiter" and order.waiter_id and order.waiter_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Forbidden")
+        raise HTTPException(status_code=403, detail="Bu buyurtma sizga tegishli emas")
 
     # optionally replace items before paying
     if payload.items is not None:
@@ -777,16 +1749,35 @@ async def pay_open_order(
                 )
             )
 
-    # Ombor mahsulotlarini kamaytirish
-    _deduct_inventory_on_sale(db, venueId, list(order.items))
+    # Ombor mahsulotlarini kamaytirish (onlayn buyurtmalar uchun qabul qilishda kamaytirilgan)
+    if order.source != "online":
+        _deduct_inventory_on_sale(db, venueId, list(order.items))
 
     # Push notification — to'lov bajarildi
     try:
+        location_parts = []
+        if order.room_name:
+            location_parts.append(order.room_name)
+        if order.table_number:
+            location_parts.append(f"Stol #{order.table_number}")
+        location = " · ".join(location_parts)
+        items_str = _order_items_text(order.items) if hasattr(order, 'items') and order.items else ""
+        tg_body = f"Buyurtma #{order.id}"
+        if location:
+            tg_body += f"\nJoy: {location}"
+        if items_str:
+            tg_body += f"\n\n{items_str}"
+        tg_body += f"\n\nJami: {float(order.total_amount):,.0f} so'm"
         _send_push_notification(
             db, venueId,
             title=f"💰 Yangi sotuv #{order.id}",
             body=f"Summa: {float(order.total_amount):,.0f} so'm · {order.payment_type}",
             url="/admin/report",
+        )
+        _send_telegram_notification(
+            db, venueId,
+            title="Yangi sotuv",
+            body=tg_body,
         )
     except Exception:
         pass
@@ -1154,6 +2145,7 @@ async def list_orders(
                 paymentType=o.payment_type,  # type: ignore[arg-type]
                 paymentSplit=payment_split,
                 status=o.status,  # type: ignore[arg-type]
+                source=o.source,
                 notes=o.notes,
                 createdAt=o.created_at,
             )
@@ -1174,6 +2166,13 @@ async def create_order(
     current_user: schemas.User = Depends(auth.get_current_user),
 ) -> schemas.OrderDetail:
     _require_venue_access(current_user, venueId)
+    # Chegirma ruxsatlarini tekshirish
+    has_discount = any((it.discountPct or 0) > 0 for it in payload.items)
+    if has_discount:
+        if current_user.role == "waiter":
+            _require_setting_enabled(db, venueId, "waiterGiveDiscount")
+        if current_user.role == "kassir":
+            _require_setting_enabled(db, venueId, "kassirGiveDiscount")
     if payload.tableId:
         _check_table_not_booked(db, venueId, payload.tableId)
     items_out: list[schemas.OrderItem] = []
@@ -1236,7 +2235,6 @@ async def create_order(
     if payload.paymentType == "debt":
         if not payload.customerId:
             raise HTTPException(status_code=422, detail="customerId is required for debt payments")
-        # For split payments that include a debt portion, store only the debt part.
         debt_amount = total_amount
         if payload.paymentSplit is not None:
             try:
@@ -1268,11 +2266,29 @@ async def create_order(
 
     # Push notification — yangi sotuv
     try:
+        location_parts = []
+        if order.room_name:
+            location_parts.append(order.room_name)
+        if order.table_number:
+            location_parts.append(f"Stol #{order.table_number}")
+        location = " · ".join(location_parts)
+        items_str = _order_items_text(order_items_for_deduction) if order_items_for_deduction else ""
+        tg_body = f"Buyurtma #{order.id}"
+        if location:
+            tg_body += f"\nJoy: {location}"
+        if items_str:
+            tg_body += f"\n\n{items_str}"
+        tg_body += f"\n\nJami: {float(order.total_amount):,.0f} so'm"
         _send_push_notification(
             db, venueId,
             title=f"💰 Yangi sotuv #{order.id}",
             body=f"Summa: {float(order.total_amount):,.0f} so'm · {order.payment_type}",
             url="/admin/report",
+        )
+        _send_telegram_notification(
+            db, venueId,
+            title="Yangi sotuv",
+            body=tg_body,
         )
     except Exception:
         pass
@@ -1291,6 +2307,7 @@ async def create_order(
         paymentType=order.payment_type,  # type: ignore[arg-type]
         paymentSplit=payload.paymentSplit,
         status=order.status,  # type: ignore[arg-type]
+        source=order.source,
         notes=order.notes,
         items=items_out,
         createdAt=order.created_at,
@@ -1346,6 +2363,7 @@ async def get_order(
         paymentType=order.payment_type,  # type: ignore[arg-type]
         paymentSplit=payment_split,
         status=order.status,  # type: ignore[arg-type]
+        source=order.source,
         notes=order.notes,
         items=items,
         createdAt=order.created_at,
@@ -1568,6 +2586,7 @@ async def get_venue_report(
                 paymentType=o.payment_type,  # type: ignore[arg-type]
                 paymentSplit=payment_split,
                 status=o.status,  # type: ignore[arg-type]
+                source=o.source,
                 notes=o.notes,
                 items=[
                     schemas.OrderItem(
@@ -1632,6 +2651,665 @@ async def get_owner_summary(
         totalRevenue=float(total_revenue),
         totalDebt=float(total_debt),
         venueStats=venue_stats,
+    )
+
+
+# ─── Tariff Plans ───
+
+
+@app.get("/api/tariff-plans", response_model=list[schemas.TariffPlan], tags=["tariff"])
+async def list_tariff_plans(
+    db: Session = Depends(get_db),
+    _: schemas.User = Depends(auth.require_role("owner")),
+) -> list[schemas.TariffPlan]:
+    plans = db.scalars(select(models.TariffPlan).order_by(models.TariffPlan.monthly_price)).all()
+    return [_plan_to_schema(p) for p in plans]
+
+
+def _plan_to_schema(p: models.TariffPlan) -> schemas.TariffPlan:
+    return schemas.TariffPlan(
+        id=p.id,
+        name=p.name,
+        description=p.description,
+        monthlyPrice=float(p.monthly_price),
+        yearlyPrice=float(p.yearly_price),
+        maxProducts=p.max_products,
+        maxStaff=p.max_staff,
+        featuresJson=p.features_json,
+        trialDays=p.trial_days,
+        isActive=p.is_active,
+        createdAt=p.created_at,
+    )
+
+
+@app.post("/api/tariff-plans", response_model=schemas.TariffPlan, tags=["tariff"], status_code=201)
+async def create_tariff_plan(
+    payload: schemas.TariffPlanInput,
+    db: Session = Depends(get_db),
+    _: schemas.User = Depends(auth.require_role("owner")),
+) -> schemas.TariffPlan:
+    p = models.TariffPlan(
+        name=payload.name,
+        description=payload.description,
+        monthly_price=payload.monthlyPrice,
+        yearly_price=payload.yearlyPrice,
+        max_products=payload.maxProducts,
+        max_staff=payload.maxStaff,
+        features_json=payload.featuresJson,
+        trial_days=payload.trialDays,
+        is_active=payload.isActive,
+    )
+    db.add(p)
+    db.flush()
+    db.refresh(p)
+    return _plan_to_schema(p)
+
+
+@app.patch("/api/tariff-plans/{plan_id}", response_model=schemas.TariffPlan, tags=["tariff"])
+async def update_tariff_plan(
+    plan_id: int,
+    payload: schemas.TariffPlanInput,
+    db: Session = Depends(get_db),
+    _: schemas.User = Depends(auth.require_role("owner")),
+) -> schemas.TariffPlan:
+    p = db.get(models.TariffPlan, plan_id)
+    if not p:
+        raise HTTPException(404, "Tariff plan not found")
+    p.name = payload.name
+    p.description = payload.description
+    p.monthly_price = payload.monthlyPrice
+    p.yearly_price = payload.yearlyPrice
+    p.max_products = payload.maxProducts
+    p.max_staff = payload.maxStaff
+    p.features_json = payload.featuresJson
+    p.trial_days = payload.trialDays
+    p.is_active = payload.isActive
+    db.flush()
+    db.refresh(p)
+    return _plan_to_schema(p)
+
+
+@app.delete("/api/tariff-plans/{plan_id}", status_code=204, tags=["tariff"], response_model=None)
+async def delete_tariff_plan(
+    plan_id: int,
+    db: Session = Depends(get_db),
+    _: schemas.User = Depends(auth.require_role("owner")),
+) -> None:
+    p = db.get(models.TariffPlan, plan_id)
+    if not p:
+        raise HTTPException(404, "Tariff plan not found")
+    # Unlink subscriptions
+    subs = db.scalars(select(models.VenueSubscription).where(models.VenueSubscription.tariff_plan_id == plan_id)).all()
+    for s in subs:
+        s.status = "cancelled"
+    db.delete(p)
+    db.flush()
+
+
+# ─── Venue Subscriptions ───
+
+
+@app.get("/api/subscriptions", response_model=list[schemas.VenueSubscriptionSchema], tags=["subscriptions"])
+async def list_subscriptions(
+    db: Session = Depends(get_db),
+    _: schemas.User = Depends(auth.require_role("owner")),
+) -> list[schemas.VenueSubscriptionSchema]:
+    subs = db.scalars(select(models.VenueSubscription).order_by(models.VenueSubscription.created_at.desc())).all()
+    result: list[schemas.VenueSubscriptionSchema] = []
+    for s in subs:
+        venue = db.get(models.Venue, s.venue_id)
+        plan = db.get(models.TariffPlan, s.tariff_plan_id)
+        result.append(schemas.VenueSubscriptionSchema(
+            id=s.id,
+            venueId=s.venue_id,
+            tariffPlanId=s.tariff_plan_id,
+            startDate=s.start_date,
+            endDate=s.end_date,
+            status=s.status,
+            billingCycle=s.billing_cycle,
+            autoRenew=s.auto_renew,
+            createdAt=s.created_at,
+            updatedAt=s.updated_at,
+            tariffPlan=_plan_to_schema(plan) if plan else None,
+            venueName=venue.name if venue else None,
+        ))
+    return result
+
+
+@app.get("/api/venues/{venue_id}/subscription", response_model=schemas.VenueSubscriptionSchema | None, tags=["subscriptions"])
+async def get_venue_subscription(
+    venue_id: int,
+    db: Session = Depends(get_db),
+    current_user: schemas.User = Depends(auth.get_current_user),
+) -> schemas.VenueSubscriptionSchema | None:
+    _require_venue_access(current_user, venue_id)
+    s = db.scalar(
+        select(models.VenueSubscription).where(
+            models.VenueSubscription.venue_id == venue_id,
+            models.VenueSubscription.status == "active",
+        ).limit(1)
+    )
+    if not s:
+        return None
+    plan = db.get(models.TariffPlan, s.tariff_plan_id)
+    venue = db.get(models.Venue, s.venue_id)
+    return schemas.VenueSubscriptionSchema(
+        id=s.id,
+        venueId=s.venue_id,
+        tariffPlanId=s.tariff_plan_id,
+        startDate=s.start_date,
+        endDate=s.end_date,
+        status=s.status,
+        billingCycle=s.billing_cycle,
+        autoRenew=s.auto_renew,
+        createdAt=s.created_at,
+        updatedAt=s.updated_at,
+        tariffPlan=_plan_to_schema(plan) if plan else None,
+        venueName=venue.name if venue else None,
+    )
+
+
+@app.post("/api/venues/{venue_id}/subscription", response_model=schemas.VenueSubscriptionSchema, tags=["subscriptions"], status_code=201)
+async def create_venue_subscription(
+    venue_id: int,
+    payload: schemas.VenueSubscriptionInput,
+    db: Session = Depends(get_db),
+    _: schemas.User = Depends(auth.require_role("owner")),
+) -> schemas.VenueSubscriptionSchema:
+    venue = db.get(models.Venue, venue_id)
+    if not venue:
+        raise HTTPException(404, "Venue not found")
+    plan = db.get(models.TariffPlan, payload.tariffPlanId)
+    if not plan:
+        raise HTTPException(404, "Tariff plan not found")
+
+    # Cancel old active subscription if exists
+    old = db.scalar(
+        select(models.VenueSubscription).where(
+            models.VenueSubscription.venue_id == venue_id,
+            models.VenueSubscription.status == "active",
+        ).limit(1)
+    )
+    if old:
+        old.status = "cancelled"
+
+    now = _now_utc()
+    if payload.billingCycle == "yearly":
+        end_date = now.replace(year=now.year + 1)
+    else:
+        end_date = now.replace(month=now.month + 1) if now.month < 12 else now.replace(year=now.year + 1, month=1)
+
+    s = models.VenueSubscription(
+        venue_id=venue_id,
+        tariff_plan_id=payload.tariffPlanId,
+        start_date=now,
+        end_date=end_date,
+        status="active",
+        billing_cycle=payload.billingCycle,
+        auto_renew=payload.autoRenew,
+    )
+    db.add(s)
+    db.flush()
+    db.refresh(s)
+    return schemas.VenueSubscriptionSchema(
+        id=s.id,
+        venueId=s.venue_id,
+        tariffPlanId=s.tariff_plan_id,
+        startDate=s.start_date,
+        endDate=s.end_date,
+        status=s.status,
+        billingCycle=s.billing_cycle,
+        autoRenew=s.auto_renew,
+        createdAt=s.created_at,
+        updatedAt=s.updated_at,
+        tariffPlan=_plan_to_schema(plan),
+        venueName=venue.name,
+    )
+
+
+@app.patch("/api/subscriptions/{sub_id}", response_model=schemas.VenueSubscriptionSchema, tags=["subscriptions"])
+async def update_subscription(
+    sub_id: int,
+    payload: schemas.VenueSubscriptionInput,
+    db: Session = Depends(get_db),
+    _: schemas.User = Depends(auth.require_role("owner")),
+) -> schemas.VenueSubscriptionSchema:
+    s = db.get(models.VenueSubscription, sub_id)
+    if not s:
+        raise HTTPException(404, "Subscription not found")
+    plan = db.get(models.TariffPlan, payload.tariffPlanId)
+    if not plan:
+        raise HTTPException(404, "Tariff plan not found")
+    s.tariff_plan_id = payload.tariffPlanId
+    s.billing_cycle = payload.billingCycle
+    s.auto_renew = payload.autoRenew
+    now = _now_utc()
+    if payload.billingCycle == "yearly":
+        s.end_date = now.replace(year=now.year + 1)
+    else:
+        s.end_date = now.replace(month=now.month + 1) if now.month < 12 else now.replace(year=now.year + 1, month=1)
+    db.add(s)
+    db.flush()
+    db.refresh(s)
+    venue = db.get(models.Venue, s.venue_id)
+    return schemas.VenueSubscriptionSchema(
+        id=s.id,
+        venueId=s.venue_id,
+        tariffPlanId=s.tariff_plan_id,
+        startDate=s.start_date,
+        endDate=s.end_date,
+        status=s.status,
+        billingCycle=s.billing_cycle,
+        autoRenew=s.auto_renew,
+        createdAt=s.created_at,
+        updatedAt=s.updated_at,
+        tariffPlan=_plan_to_schema(plan),
+        venueName=venue.name if venue else None,
+    )
+
+
+# ─── Payments ───
+
+
+@app.get("/api/payments", response_model=list[schemas.PaymentSchema], tags=["payments"])
+async def list_payments(
+    db: Session = Depends(get_db),
+    _: schemas.User = Depends(auth.require_role("owner")),
+) -> list[schemas.PaymentSchema]:
+    payments = db.scalars(select(models.Payment).order_by(models.Payment.created_at.desc())).all()
+    result: list[schemas.PaymentSchema] = []
+    for pm in payments:
+        venue = db.get(models.Venue, pm.venue_id)
+        result.append(_payment_to_schema(pm, venue.name if venue else None))
+    return result
+
+
+@app.post("/api/payments", response_model=schemas.PaymentSchema, tags=["payments"], status_code=201)
+async def create_payment(
+    payload: schemas.PaymentInput,
+    db: Session = Depends(get_db),
+    _: schemas.User = Depends(auth.require_role("owner")),
+) -> schemas.PaymentSchema:
+    venue = db.get(models.Venue, payload.venueId)
+    if not venue:
+        raise HTTPException(404, "Venue not found")
+    pm = models.Payment(
+        venue_id=payload.venueId,
+        subscription_id=payload.subscriptionId,
+        amount=payload.amount,
+        currency=payload.currency,
+        status=payload.status,
+        payment_method=payload.paymentMethod,
+        billing_cycle=payload.billingCycle,
+        notes=payload.notes,
+        paid_at=payload.paidAt or _now_utc(),
+    )
+    db.add(pm)
+    db.flush()
+    db.refresh(pm)
+    return _payment_to_schema(pm, venue.name)
+
+
+@app.patch("/api/payments/{payment_id}", response_model=schemas.PaymentSchema, tags=["payments"])
+async def update_payment(
+    payment_id: int,
+    payload: schemas.PaymentInput,
+    db: Session = Depends(get_db),
+    _: schemas.User = Depends(auth.require_role("owner")),
+) -> schemas.PaymentSchema:
+    pm = db.get(models.Payment, payment_id)
+    if not pm:
+        raise HTTPException(404, "Payment not found")
+    if pm.status == "paid":
+        raise HTTPException(400, "To'langan to'lovni o'zgartirib bo'lmaydi")
+    venue = db.get(models.Venue, payload.venueId)
+    if not venue:
+        raise HTTPException(404, "Venue not found")
+    pm.venue_id = payload.venueId
+    pm.subscription_id = payload.subscriptionId
+    pm.amount = payload.amount
+    pm.currency = payload.currency
+    pm.status = payload.status
+    pm.payment_method = payload.paymentMethod
+    pm.billing_cycle = payload.billingCycle
+    pm.notes = payload.notes
+    if payload.paidAt:
+        pm.paid_at = payload.paidAt
+    db.flush()
+    db.refresh(pm)
+    return _payment_to_schema(pm, venue.name)
+
+
+def _payment_to_schema(pm: models.Payment, venue_name: str | None = None) -> schemas.PaymentSchema:
+    return schemas.PaymentSchema(
+        id=pm.id,
+        venueId=pm.venue_id,
+        subscriptionId=pm.subscription_id,
+        amount=float(pm.amount),
+        currency=pm.currency,
+        status=pm.status,
+        paymentMethod=pm.payment_method,
+        billingCycle=pm.billing_cycle,
+        notes=pm.notes,
+        paidAt=pm.paid_at,
+        createdAt=pm.created_at,
+        venueName=venue_name,
+    )
+
+
+# ─── Owner Dashboard Stats ───
+
+
+@app.get("/api/owner/dashboard", response_model=schemas.OwnerDashboardStats, tags=["owner"])
+async def get_owner_dashboard(
+    db: Session = Depends(get_db),
+    _: schemas.User = Depends(auth.require_role("owner")),
+) -> schemas.OwnerDashboardStats:
+    venues = db.scalars(select(models.Venue).order_by(models.Venue.created_at.desc())).all()
+    now = _now_utc()
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    year_start = now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+
+    # Monthly revenue from payments
+    monthly_rev = db.scalar(
+        select(func.coalesce(func.sum(models.Payment.amount), 0)).where(
+            models.Payment.status == "paid",
+            models.Payment.created_at >= month_start,
+        )
+    )
+    # Yearly revenue from payments
+    yearly_rev = db.scalar(
+        select(func.coalesce(func.sum(models.Payment.amount), 0)).where(
+            models.Payment.status == "paid",
+            models.Payment.created_at >= year_start,
+        )
+    )
+
+    # Subscriptions
+    active_subs = db.scalar(
+        select(func.count()).select_from(models.VenueSubscription).where(
+            models.VenueSubscription.status == "active"
+        )
+    )
+    expired_subs = db.scalar(
+        select(func.count()).select_from(models.VenueSubscription).where(
+            models.VenueSubscription.status == "expired"
+        )
+    )
+
+    # Recent payments (last 20)
+    recent_pmts = db.scalars(
+        select(models.Payment).order_by(models.Payment.created_at.desc()).limit(20)
+    ).all()
+    recent_payments: list[schemas.PaymentSchema] = []
+    for pm in recent_pmts:
+        v = db.get(models.Venue, pm.venue_id)
+        recent_payments.append(_payment_to_schema(pm, v.name if v else None))
+
+    # Latest venues (last 10)
+    latest_venues: list[schemas.VenueStat] = []
+    for v in venues[:10]:
+        today_rev = db.scalar(
+            select(func.coalesce(func.sum(models.Order.total_amount), 0)).where(
+                models.Order.venue_id == v.id, models.Order.created_at >= month_start
+            )
+        )
+        venue_debt = db.scalar(
+            select(func.coalesce(func.sum(models.Debt.amount - models.Debt.paid_amount), 0)).where(models.Debt.venue_id == v.id)
+        )
+        order_count = db.scalar(
+            select(func.count()).select_from(models.Order).where(
+                models.Order.venue_id == v.id, models.Order.created_at >= month_start
+            )
+        )
+        latest_venues.append(schemas.VenueStat(
+            venueId=v.id,
+            venueName=v.name,
+            todayRevenue=float(today_rev or 0),
+            totalDebt=float(venue_debt or 0),
+            orderCount=int(order_count or 0),
+        ))
+
+    # All venue subscriptions
+    subs = db.scalars(select(models.VenueSubscription).order_by(models.VenueSubscription.created_at.desc())).all()
+    venue_subs: list[schemas.VenueSubscriptionSchema] = []
+    for s in subs:
+        v = db.get(models.Venue, s.venue_id)
+        plan = db.get(models.TariffPlan, s.tariff_plan_id)
+        venue_subs.append(schemas.VenueSubscriptionSchema(
+            id=s.id,
+            venueId=s.venue_id,
+            tariffPlanId=s.tariff_plan_id,
+            startDate=s.start_date,
+            endDate=s.end_date,
+            status=s.status,
+            billingCycle=s.billing_cycle,
+            autoRenew=s.auto_renew,
+            createdAt=s.created_at,
+            updatedAt=s.updated_at,
+            tariffPlan=_plan_to_schema(plan) if plan else None,
+            venueName=v.name if v else None,
+        ))
+
+    # ── Chart data ──
+    all_pmts = db.scalars(select(models.Payment).order_by(models.Payment.created_at.desc())).all()
+    chart_payments = []
+    for pm in all_pmts:
+        v = db.get(models.Venue, pm.venue_id)
+        plan = None
+        if pm.subscription_id:
+            sub = db.get(models.VenueSubscription, pm.subscription_id)
+            if sub:
+                plan = db.get(models.TariffPlan, sub.tariff_plan_id)
+        chart_payments.append({
+            "pm": pm, "venue": v, "plan": plan,
+            "amount": float(pm.amount),
+        })
+
+    total_revenue = sum(p["amount"] for p in chart_payments if p["pm"].status == "paid")
+    paid_count = sum(1 for p in chart_payments if p["pm"].status == "paid")
+    pending_count = sum(1 for p in chart_payments if p["pm"].status == "pending")
+    failed_count = sum(1 for p in chart_payments if p["pm"].status == "failed")
+
+    # Daily (current month)
+    daily_map: dict[int, list[float]] = {}
+    for p in chart_payments:
+        if p["pm"].status != "paid":
+            continue
+        if p["pm"].created_at.year != now.year or p["pm"].created_at.month != now.month:
+            continue
+        day = p["pm"].created_at.day
+        daily_map.setdefault(day, []).append(p["amount"])
+    daily_breakdown = [
+        schemas.RevenueByDay(year=now.year, month=now.month, day=d, total=sum(vals), count=len(vals))
+        for d, vals in sorted(daily_map.items())
+    ]
+
+    # Monthly (current year)
+    monthly_map: dict[int, list[float]] = {}
+    for p in chart_payments:
+        if p["pm"].status != "paid":
+            continue
+        if p["pm"].created_at.year != now.year:
+            continue
+        month = p["pm"].created_at.month
+        monthly_map.setdefault(month, []).append(p["amount"])
+    monthly_breakdown = [
+        schemas.RevenueByMonth(year=now.year, month=m, total=sum(vals), count=len(vals))
+        for m, vals in sorted(monthly_map.items())
+    ]
+
+    # Yearly (all years)
+    yearly_map: dict[int, list[float]] = {}
+    for p in chart_payments:
+        if p["pm"].status != "paid":
+            continue
+        y = p["pm"].created_at.year
+        yearly_map.setdefault(y, []).append(p["amount"])
+    yearly_breakdown = [
+        schemas.RevenueByMonth(year=y, month=0, total=sum(vals), count=len(vals))
+        for y, vals in sorted(yearly_map.items())
+    ]
+
+    # By venue
+    venue_map: dict[int, dict] = {}
+    for p in chart_payments:
+        vid = p["pm"].venue_id
+        if vid not in venue_map:
+            venue_map[vid] = {"name": p["venue"].name if p["venue"] else f"#{vid}", "total": 0.0, "count": 0}
+        if p["pm"].status == "paid":
+            venue_map[vid]["total"] += p["amount"]
+            venue_map[vid]["count"] += 1
+    by_venue = [
+        schemas.RevenueByVenue(venueId=vid, venueName=d["name"], total=d["total"], count=d["count"])
+        for vid, d in sorted(venue_map.items(), key=lambda x: x[1]["total"], reverse=True)
+    ]
+
+    # By tariff
+    tariff_map: dict[int, dict] = {}
+    for p in chart_payments:
+        tid = p["plan"].id if p["plan"] else 0
+        if tid not in tariff_map:
+            tariff_map[tid] = {"name": p["plan"].name if p["plan"] else "Noma'lum", "total": 0.0, "count": 0}
+        if p["pm"].status == "paid":
+            tariff_map[tid]["total"] += p["amount"]
+            tariff_map[tid]["count"] += 1
+    by_tariff = [
+        schemas.RevenueByTariff(tariffPlanId=tid, tariffName=d["name"], total=d["total"], count=d["count"])
+        for tid, d in sorted(tariff_map.items(), key=lambda x: x[1]["total"], reverse=True)
+    ]
+
+    return schemas.OwnerDashboardStats(
+        totalVenues=len(venues),
+        totalMonthlyRevenue=float(monthly_rev or 0),
+        totalYearlyRevenue=float(yearly_rev or 0),
+        activeSubscriptions=int(active_subs or 0),
+        expiredSubscriptions=int(expired_subs or 0),
+        recentPayments=recent_payments,
+        latestVenues=latest_venues,
+        venueSubscriptions=venue_subs,
+        totalRevenue=float(total_revenue),
+        paidCount=paid_count,
+        pendingCount=pending_count,
+        failedCount=failed_count,
+        dailyBreakdown=daily_breakdown,
+        monthlyBreakdown=monthly_breakdown,
+        yearlyBreakdown=yearly_breakdown,
+        byVenue=by_venue,
+        byTariff=by_tariff,
+    )
+
+
+# ─── Owner Reports ───
+
+
+@app.get("/api/owner/reports", response_model=schemas.OwnerReport, tags=["owner"])
+async def get_owner_reports(
+    db: Session = Depends(get_db),
+    _: schemas.User = Depends(auth.require_role("owner")),
+) -> schemas.OwnerReport:
+    payments = db.scalars(select(models.Payment).order_by(models.Payment.created_at.desc())).all()
+    all_payments = []
+    for pm in payments:
+        v = db.get(models.Venue, pm.venue_id)
+        plan = None
+        if pm.subscription_id:
+            sub = db.get(models.VenueSubscription, pm.subscription_id)
+            if sub:
+                plan = db.get(models.TariffPlan, sub.tariff_plan_id)
+        all_payments.append({
+            "pm": pm, "venue": v, "plan": plan,
+            "amount": float(pm.amount),
+        })
+
+    now = _now_utc()
+    current_year = now.year
+    current_month = now.month
+
+    total_revenue = sum(p["amount"] for p in all_payments if p["pm"].status == "paid")
+    paid_count = sum(1 for p in all_payments if p["pm"].status == "paid")
+    pending_count = sum(1 for p in all_payments if p["pm"].status == "pending")
+    failed_count = sum(1 for p in all_payments if p["pm"].status == "failed")
+
+    # Daily breakdown (current month)
+    daily_map: dict[int, list[float]] = {}
+    for p in all_payments:
+        if p["pm"].status != "paid":
+            continue
+        if p["pm"].created_at.year != current_year or p["pm"].created_at.month != current_month:
+            continue
+        day = p["pm"].created_at.day
+        daily_map.setdefault(day, []).append(p["amount"])
+    daily_breakdown = [
+        schemas.RevenueByDay(year=current_year, month=current_month, day=d, total=sum(vals), count=len(vals))
+        for d, vals in sorted(daily_map.items())
+    ]
+
+    # Monthly breakdown (current year)
+    monthly_map: dict[int, list[float]] = {}
+    for p in all_payments:
+        if p["pm"].status != "paid":
+            continue
+        if p["pm"].created_at.year != current_year:
+            continue
+        month = p["pm"].created_at.month
+        monthly_map.setdefault(month, []).append(p["amount"])
+    monthly_breakdown = [
+        schemas.RevenueByMonth(year=current_year, month=m, total=sum(vals), count=len(vals))
+        for m, vals in sorted(monthly_map.items())
+    ]
+
+    # Yearly breakdown (all years)
+    yearly_map: dict[int, list[float]] = {}
+    for p in all_payments:
+        if p["pm"].status != "paid":
+            continue
+        y = p["pm"].created_at.year
+        yearly_map.setdefault(y, []).append(p["amount"])
+    yearly_breakdown = [
+        schemas.RevenueByMonth(year=y, month=0, total=sum(vals), count=len(vals))
+        for y, vals in sorted(yearly_map.items())
+    ]
+
+    # By venue
+    venue_map: dict[int, dict] = {}
+    for p in all_payments:
+        vid = p["pm"].venue_id
+        if vid not in venue_map:
+            venue_map[vid] = {"name": p["venue"].name if p["venue"] else f"#{vid}", "total": 0.0, "count": 0}
+        if p["pm"].status == "paid":
+            venue_map[vid]["total"] += p["amount"]
+            venue_map[vid]["count"] += 1
+    by_venue = [
+        schemas.RevenueByVenue(venueId=vid, venueName=d["name"], total=d["total"], count=d["count"])
+        for vid, d in sorted(venue_map.items(), key=lambda x: x[1]["total"], reverse=True)
+    ]
+
+    # By tariff
+    tariff_map: dict[int, dict] = {}
+    for p in all_payments:
+        tid = p["plan"].id if p["plan"] else 0
+        if tid not in tariff_map:
+            tariff_map[tid] = {"name": p["plan"].name if p["plan"] else "Noma'lum", "total": 0.0, "count": 0}
+        if p["pm"].status == "paid":
+            tariff_map[tid]["total"] += p["amount"]
+            tariff_map[tid]["count"] += 1
+    by_tariff = [
+        schemas.RevenueByTariff(tariffPlanId=tid, tariffName=d["name"], total=d["total"], count=d["count"])
+        for tid, d in sorted(tariff_map.items(), key=lambda x: x[1]["total"], reverse=True)
+    ]
+
+    return schemas.OwnerReport(
+        totalRevenue=float(total_revenue),
+        totalPayments=len(all_payments),
+        paidCount=paid_count,
+        pendingCount=pending_count,
+        failedCount=failed_count,
+        dailyBreakdown=daily_breakdown,
+        monthlyBreakdown=monthly_breakdown,
+        yearlyBreakdown=yearly_breakdown,
+        byVenue=by_venue,
+        byTariff=by_tariff,
     )
 
 
@@ -1734,6 +3412,29 @@ async def list_tables(
     _require_venue_access(current_user, venueId)
     tables = db.scalars(select(models.Table).where(models.Table.venue_id == venueId)).all()
     return [_table_to_schema(t) for t in tables]
+
+
+@app.get(
+    "/api/venues/{venueId}/occupied-tables",
+    response_model=list[int],
+    tags=["rooms"],
+)
+async def list_occupied_tables(
+    venueId: int,
+    db: Session = Depends(get_db),
+    current_user: schemas.User = Depends(auth.get_current_user),
+) -> list[int]:
+    """Band (egallangan) stollar IDlari ro'yxati: hali afitsiant yopmagan buyurtmalar bo'lgan stollar."""
+    _require_venue_access(current_user, venueId)
+    rows = db.execute(
+        select(models.Order.table_id).where(
+            models.Order.venue_id == venueId,
+            models.Order.waiter_closed == False,
+            models.Order.status.in_(["open", "preparing", "ready"]),
+            models.Order.table_id.isnot(None),
+        ).distinct()
+    ).all()
+    return [r[0] for r in rows if r[0] is not None]
 
 
 @app.post(
@@ -2079,11 +3780,14 @@ async def public_get_venue(
         id=v.id,
         name=v.name,
         type=v.type,
+        logoUrl=v.logo_url,
         address=v.address,
         phone=v.phone,
         instagram=v.instagram,
         telegram=v.telegram,
         facebook=v.facebook,
+        latitude=float(v.latitude) if v.latitude is not None else None,
+        longitude=float(v.longitude) if v.longitude is not None else None,
     )
 
 
@@ -2196,7 +3900,7 @@ async def _build_public_menu(db: Session, v: models.Venue) -> schemas.PublicMenu
             id=d.id + 100000,  # ID to'qnashuvini oldini olish
             name=d.name,
             price=float(d.sell_price),
-            category="Tayyor mahsulot",
+            category=d.category or "Tayyor mahsulot",
             description=None,
             imageUrl=d.image_url,
         ))
@@ -2206,11 +3910,14 @@ async def _build_public_menu(db: Session, v: models.Venue) -> schemas.PublicMenu
             id=v.id,
             name=v.name,
             type=v.type,
+            logoUrl=v.logo_url,
             address=v.address,
             phone=v.phone,
             instagram=v.instagram,
             telegram=v.telegram,
             facebook=v.facebook,
+            latitude=float(v.latitude) if v.latitude is not None else None,
+            longitude=float(v.longitude) if v.longitude is not None else None,
         ),
         products=public_products,
     )
@@ -2311,7 +4018,7 @@ async def create_inventory_item(
                 venue_id=venueId,
                 name=item.name,
                 price=float(item.sell_price),
-                category="Tayyor mahsulot",
+                category=item.category or "Tayyor mahsulot",
                 image_url=item.image_url,
                 stock=int(float(item.quantity)) if float(item.quantity) > 0 else None,
                 is_available=True,
@@ -2380,6 +4087,34 @@ async def update_inventory_item(
                 quantity=tx_qty,
                 note=f"Tahrirlash: miqdor {old_qty:.0f} → {new_qty:.0f} {item.unit}",
                 created_by=current_user.id,
+            ))
+    # Direct mahsulot bo'lsa, Product yozuvini ham yangilaymiz
+    if item.item_type == "direct":
+        existing_product = db.scalar(
+            select(models.Product).where(
+                models.Product.venue_id == venueId,
+                models.Product.name == item.name,
+            )
+        )
+        if existing_product:
+            if "category" in patch:
+                existing_product.category = item.category or "Tayyor mahsulot"
+            if "sellPrice" in patch:
+                existing_product.price = float(item.sell_price)
+            if "quantity" in patch:
+                existing_product.stock = int(new_qty) if new_qty > 0 else None
+            if "imageUrl" in patch:
+                existing_product.image_url = item.image_url
+        elif float(item.sell_price) > 0:
+            # Product hali yaratilmagan bo'lsa, yangidan yaratamiz
+            db.add(models.Product(
+                venue_id=venueId,
+                name=item.name,
+                price=float(item.sell_price),
+                category=item.category or "Tayyor mahsulot",
+                image_url=item.image_url,
+                stock=int(float(item.quantity)) if float(item.quantity) > 0 else None,
+                is_available=True,
             ))
     db.flush()
     db.refresh(item)
@@ -2553,6 +4288,20 @@ def _get_or_create_settings(db: Session, venue_id: int) -> models.VenueSettings:
         db.flush()
         db.refresh(s)
     return s
+
+
+def _require_setting_enabled(db: Session, venue_id: int, schema_key: str) -> None:
+    """Berilgan funksiya sozlamada yoqilganligini tekshirish.
+    Agar o'chirilgan bo'lsa HTTP 403 qaytaradi.
+    schema_key — camelCase kalit (masalan 'onlineOrdersEnabled').
+    """
+    s = _get_or_create_settings(db, venue_id)
+    db_key = SETTINGS_FIELD_MAP.get(schema_key)
+    if db_key is None:
+        return
+    enabled = getattr(s, db_key, None)
+    if enabled is False:
+        raise HTTPException(status_code=403, detail=f"Bu funksiya o'chirilgan: {schema_key}")
 
 
 def _settings_to_schema(s: models.VenueSettings) -> schemas.VenueSettingsSchema:
@@ -2950,21 +4699,23 @@ async def set_product_recipe(
     return await get_product_recipe(venueId, productId, db, current_user)
 
 
-def _deduct_inventory_on_sale(db: Session, venue_id: int, order_items: list) -> None:
+def _deduct_inventory_on_sale(db: Session, venue_id: int, order_items: list, reverse: bool = False) -> None:
     """Buyurtma yaratilganda/to'langanda ombordan mahsulotlarni avtomatik kamaytirish.
     - direct tipidagi ombor mahsuloti: to'g'ridan-to'g'ri quantity kamaytiladi
     - ingredient tipidagi: product_recipes orqali har bir ingredient kamaytiladi
     """
+    now = datetime.now(timezone.utc)
     for oi in order_items:
         product_id = oi.product_id if hasattr(oi, "product_id") else oi.get("product_id")
         qty_sold = oi.quantity if hasattr(oi, "quantity") else oi.get("quantity", 0)
+        if reverse:
+            qty_sold = -qty_sold  # storno: omborga qaytarish
 
-        # 1) "direct" ombor mahsulotini tekshirish (product bilan bir xil nomli direct item)
         product = db.get(models.Product, product_id)
         if not product:
             continue
 
-        # Direct inventory item linked by same product (matching name + venue)
+        # 1) "direct" ombor mahsulotini tekshirish (product bilan bir xil nomli direct item)
         direct_item = db.scalar(
             select(models.InventoryItem).where(
                 models.InventoryItem.venue_id == venue_id,
@@ -2973,7 +4724,17 @@ def _deduct_inventory_on_sale(db: Session, venue_id: int, order_items: list) -> 
             )
         )
         if direct_item:
-            direct_item.quantity = max(0, float(direct_item.quantity) - qty_sold)
+            old_qty = float(direct_item.quantity)
+            new_qty = max(0, old_qty - qty_sold)
+            direct_item.quantity = new_qty
+            db.add(models.InventoryTransaction(
+                venue_id=venue_id,
+                item_id=direct_item.id,
+                type="out",
+                quantity=qty_sold,
+                note=f"'{product.name}' sotildi ({qty_sold} dona). Qoldiq: {new_qty:.0f} {direct_item.unit}",
+                created_at=now,
+            ))
             continue
 
         # 2) Ingredient (retsept bo'yicha)
@@ -2984,7 +4745,17 @@ def _deduct_inventory_on_sale(db: Session, venue_id: int, order_items: list) -> 
             inv_item = db.get(models.InventoryItem, recipe.inventory_item_id)
             if inv_item:
                 deduct = float(recipe.quantity) * qty_sold
-                inv_item.quantity = max(0, float(inv_item.quantity) - deduct)
+                old_qty = float(inv_item.quantity)
+                new_qty = max(0, old_qty - deduct)
+                inv_item.quantity = new_qty
+                db.add(models.InventoryTransaction(
+                    venue_id=venue_id,
+                    item_id=inv_item.id,
+                    type="out",
+                    quantity=deduct,
+                    note=f"'{product.name}' ({qty_sold} dona) uchun sarflandi. Qoldiq: {new_qty:.3f} {inv_item.unit}",
+                    created_at=now,
+                ))
 
 
 # ============================================================================
@@ -3048,6 +4819,44 @@ def _send_push_notification(db: Session, venue_id: int, title: str, body: str, u
             db.delete(s)
     if failed_endpoints:
         db.flush()
+
+
+def _order_items_text(items: list) -> str:
+    """Max 5 ta mahsulot nomini qaytaradi."""
+    lines = []
+    for i, item in enumerate(items):
+        if i >= 5:
+            lines.append(f"  …va yana {len(items)-5} ta")
+            break
+        lines.append(f"  {i+1}. {item.product_name} × {item.quantity}")
+    return "\n".join(lines)
+
+
+def _send_telegram_notification(db: Session, venue_id: int, title: str, body: str) -> None:
+    """Admin/owner foydalanuvchilarga Telegram orqali xabar yuborish."""
+    venue = db.get(models.Venue, venue_id)
+    if not venue or not venue.telegram_bot_token:
+        return
+    admins = db.scalars(
+        select(models.User).where(
+            models.User.venue_id == venue_id,
+            models.User.role.in_(["admin", "owner"]),
+        )
+    ).all()
+    for admin in admins:
+        link = db.scalar(
+            select(models.UserTelegram).where(models.UserTelegram.user_id == admin.id)
+        )
+        if link:
+            _tg_send(
+                venue.telegram_bot_token,
+                "sendMessage",
+                {
+                    "chat_id": link.chat_id,
+                    "text": f"🏪 *{venue.name}*\n\n💰 *{title}*\n{body}",
+                    "parse_mode": "Markdown",
+                },
+            )
 
 
 @app.get("/api/push/vapid-key", response_model=schemas.VapidPublicKeyResponse, tags=["push"])
@@ -3114,6 +4923,24 @@ async def push_test(
             url="/admin/dashboard",
         )
     return {"detail": "sent"}
+
+
+@app.post("/api/user/telegram/link", tags=["telegram"])
+async def link_telegram_chat(
+    input: schemas.TelegramLinkInput,
+    db: Session = Depends(get_db),
+    current_user: schemas.User = Depends(auth.get_current_user),
+):
+    """Joriy foydalanuvchiga Telegram chat ID ni bog'lash."""
+    existing = db.scalar(
+        select(models.UserTelegram).where(models.UserTelegram.user_id == current_user.id)
+    )
+    if existing:
+        existing.chat_id = input.chatId
+    else:
+        db.add(models.UserTelegram(user_id=current_user.id, chat_id=input.chatId))
+    db.flush()
+    return {"ok": True}
 
 
 # ============================================================================
@@ -3285,6 +5112,7 @@ async def public_create_online_order(
     venue = db.get(models.Venue, venueId)
     if not venue:
         raise HTTPException(status_code=404, detail="Venue not found")
+    _require_setting_enabled(db, venueId, "onlineOrdersEnabled")
 
     # Mahsulotlarni va narxlarni tasdiqlash
     total = 0.0
@@ -3338,11 +5166,28 @@ async def public_create_online_order(
 
     # Push notification — yangi onlayn buyurtma
     try:
+        items_str = "\n".join(
+            f"  {i+1}. {it.name} × {it.quantity}"
+            for i, it in enumerate(payload.items[:5])
+        ) if payload.items else ""
+        if len(payload.items) > 5:
+            items_str += f"\n  …va yana {len(payload.items)-5} ta"
+        tg_body = f"Buyurtma #{o.id}"
+        tg_body += f"\nMijoz: {payload.customerName or '—'}"
+        tg_body += f"\nYetkazish: {payload.deliveryType}"
+        if items_str:
+            tg_body += f"\n\n{items_str}"
+        tg_body += f"\n\nJami: {total:,.0f} so'm"
         _send_push_notification(
             db, venueId,
             title=f"🛵 Yangi onlayn buyurtma #{o.id}",
             body=f"{payload.customerName} · {total:,.0f} so'm · {payload.deliveryType}",
             url="/admin/online-orders",
+        )
+        _send_telegram_notification(
+            db, venueId,
+            title="Yangi onlayn buyurtma",
+            body=tg_body,
         )
     except Exception:
         pass
@@ -3365,7 +5210,11 @@ async def public_online_order_history(
         select(models.OnlineOrder)
         .where(
             models.OnlineOrder.venue_id == venueId,
-            models.OnlineOrder.telegram_user_id == telegram_user_id,
+            or_(
+                models.OnlineOrder.telegram_user_id == telegram_user_id,
+                models.OnlineOrder.telegram_user_id.is_(None),
+                models.OnlineOrder.telegram_user_id == "",
+            ),
         )
         .order_by(models.OnlineOrder.created_at.desc())
         .limit(50)
@@ -3385,7 +5234,28 @@ async def list_online_orders(
     current_user: schemas.User = Depends(auth.get_current_user),
 ) -> list[schemas.OnlineOrder]:
     _require_venue_access(current_user, venueId)
+    if current_user.role != "public":
+        _require_setting_enabled(db, venueId, "onlineOrdersEnabled")
     q = select(models.OnlineOrder).where(models.OnlineOrder.venue_id == venueId)
+
+    # Dastavkachi faqat o'zi qabul qilgan va yangi buyurtmalarni ko'radi
+    if current_user.role == "dastavkachi":
+        q = q.where(
+            or_(
+                models.OnlineOrder.status == "new",
+                models.OnlineOrder.accepted_by == current_user.id,
+            )
+        )
+
+    # Oshpaz faqat o'ziga biriktirilgan yoki biriktirilmagan buyurtmalarni ko'radi
+    if current_user.role == "oshpaz":
+        q = q.where(
+            or_(
+                models.OnlineOrder.chef_id == current_user.id,
+                models.OnlineOrder.chef_id.is_(None),
+            )
+        )
+
     if status_filter and status_filter != "all":
         q = q.where(models.OnlineOrder.status == status_filter)
     q = q.order_by(models.OnlineOrder.id.desc()).limit(200)
@@ -3394,7 +5264,8 @@ async def list_online_orders(
 
 
 def _create_pos_order_from_online_order(db: Session, venue_id: int, oo: models.OnlineOrder) -> int | None:
-    """Onlayn buyurtma qabul qilinganda POS order yaratadi va stock kamaytiradi."""
+    """Onlayn buyurtma qabul qilinganda ochiq (kutuvchi) POS order yaratadi.
+    Inventar kamaytirish kassir to'lovni amalga oshirganda `pay_open_order` da bajariladi."""
     try:
         items_data = json.loads(oo.items_json or "[]")
     except Exception:
@@ -3409,8 +5280,10 @@ def _create_pos_order_from_online_order(db: Session, venue_id: int, oo: models.O
         waiter_id=oo.accepted_by,
         total_amount=total_amount,
         payment_type="cash",
-        status="completed",
+        status="open",
+        source="online",
         notes=f"Onlayn buyurtma #{oo.id} — {oo.customer_name}",
+        created_at=oo.created_at,
     )
     db.add(order)
     db.flush()
@@ -3429,7 +5302,7 @@ def _create_pos_order_from_online_order(db: Session, venue_id: int, oo: models.O
     db.flush()
     db.refresh(order)
 
-    # Stock kamaytirish
+    # Inventarni real-time kamaytirish (oshxona buyurtmani qabul qilganda)
     order_items = db.scalars(
         select(models.OrderItem).where(models.OrderItem.order_id == order.id)
     ).all()
@@ -3451,23 +5324,67 @@ async def update_online_order_status(
     current_user: schemas.User = Depends(auth.get_current_user),
 ) -> schemas.OnlineOrder:
     _require_venue_access(current_user, venueId)
+    if current_user.role != "public":
+        _require_setting_enabled(db, venueId, "onlineOrdersEnabled")
     o = db.get(models.OnlineOrder, orderId)
     if not o or o.venue_id != venueId:
         raise HTTPException(status_code=404, detail="Online order not found")
 
-    # Rolega qarab qaysi statuslarga o'tkazishi mumkin
     role = current_user.role
     new_status = payload.status
+    current_status = o.status
 
-    # Birinchi qabul qilgan kassir/oshpaz/mangalchi ni belgilash
+    # Ruxsat etilgan status o'tishlarini tekshirish
+    allowed = False
+
+    # Dastavkachi/admin/owner: new → accepted, new → cancelled
+    if current_status == "new" and new_status in ("accepted", "cancelled"):
+        if role in ("dastavkachi", "admin", "owner"):
+            allowed = True
+
+    # Dastavkachi/admin/owner: accepted → preparing
+    if current_status == "accepted" and new_status == "preparing":
+        if role in ("dastavkachi", "admin", "owner"):
+            allowed = True
+
+    # Oshpaz/admin/owner: preparing → ready
+    if current_status == "preparing" and new_status == "ready":
+        if role in ("oshpaz", "admin", "owner"):
+            allowed = True
+
+    # Dastavkachi/admin/owner: ready → delivering (delivery), ready → delivered (pickup)
+    if current_status == "ready" and new_status == "delivering" and o.delivery_type == "delivery":
+        if role in ("dastavkachi", "admin", "owner"):
+            allowed = True
+    if current_status == "ready" and new_status == "delivered" and o.delivery_type == "pickup":
+        if role in ("dastavkachi", "admin", "owner"):
+            allowed = True
+
+    # Dastavkachi/admin/owner: delivering → delivered
+    if current_status == "delivering" and new_status == "delivered":
+        if role in ("dastavkachi", "admin", "owner"):
+            allowed = True
+
+    if not allowed:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Holatni '{current_status}' dan '{new_status}' ga o'zgartirish mumkin emas",
+        )
+
+    # Birinchi qabul qilganni belgilash
     if new_status == "accepted" and o.accepted_by is None:
         o.accepted_by = current_user.id
-        # POS buyurtma yaratish (kassada sotuv) va stock kamaytirish
         if o.pos_order_id is None:
             pos_order_id = _create_pos_order_from_online_order(db, venueId, o)
             if pos_order_id is not None:
                 o.pos_order_id = pos_order_id
-    if new_status == "delivering" and role == "dastavkachi" and o.courier_id is None:
+
+    # Oshpazni belgilash (preparing holatida)
+    if new_status == "preparing" and o.chef_id is None:
+        o.chef_id = current_user.id
+
+    # Kuryerni belgilash
+    if new_status == "delivering" and o.courier_id is None:
         o.courier_id = current_user.id
 
     o.status = new_status
@@ -3572,6 +5489,29 @@ async def telegram_webhook(
                 customer.phone = contact.get("phone_number")
                 customer.is_registered = True
                 db.flush()
+                # Admin/owner hisobiga telegram chat_id ni bog'lash
+                phone_raw = contact.get("phone_number", "")
+                phone_digits = "".join(c for c in phone_raw if c.isdigit())
+                if phone_digits:
+                    admins = db.scalars(
+                        select(models.User).where(
+                            models.User.venue_id == venue_id,
+                            models.User.role.in_(["admin", "owner"]),
+                            models.User.phone != None,
+                        )
+                    ).all()
+                    for admin_user in admins:
+                        admin_digits = "".join(c for c in admin_user.phone if c.isdigit())
+                        if admin_digits and admin_digits[-9:] == phone_digits[-9:]:
+                            existing = db.scalar(
+                                select(models.UserTelegram).where(models.UserTelegram.user_id == admin_user.id)
+                            )
+                            if existing:
+                                existing.chat_id = chat_id
+                            else:
+                                db.add(models.UserTelegram(user_id=admin_user.id, chat_id=chat_id))
+                            db.flush()
+                            break
                 _tg_send(bot_token, "sendMessage", {
                     "chat_id": chat_id,
                     "text": (
@@ -3621,9 +5561,20 @@ async def telegram_webhook(
                     f"📱 Телефон: {phone_text}\n"
                     f"📍 Адрес: {address_text}"
                 )
+            if venue.latitude and venue.longitude:
+                contact_text += (
+                    f"\n\n📍 [Google Maps](https://www.google.com/maps?q={venue.latitude},{venue.longitude})"
+                )
             _tg_send(bot_token, "sendMessage", {
                 "chat_id": chat_id,
                 "text": contact_text,
+                "parse_mode": "Markdown",
+            })
+
+        elif text in ("🆔 Mening ID", "/myid", "/id"):
+            _tg_send(bot_token, "sendMessage", {
+                "chat_id": chat_id,
+                "text": f"🆔 Sizning Telegram chattingiz ID: `{chat_id}`\n\nBu ID ni CRM dagi sozlamalarga kiritishingiz mumkin.",
                 "parse_mode": "Markdown",
             })
 
@@ -3711,7 +5662,7 @@ def _send_main_menu(bot_token: str, chat_id: int, venue: models.Venue, lang: str
         contact_btn = "📞 Контакты"
         lang_btn = "🌐 Сменить язык"
 
-    base_url = settings.PUBLIC_URL
+    base_url = settings.FRONTEND_PUBLIC_URL
     webapp_url = f"{base_url}/tg-menu/{venue.id}"
 
     _tg_send(bot_token, "sendMessage", {
@@ -3745,6 +5696,11 @@ async def setup_telegram_webhook(
         raise HTTPException(
             status_code=400,
             detail="Public URL aniqlanmadi. .env'da PUBLIC_URL ni HTTPS URL'ga sozlang (masalan: https://resca.uz)",
+        )
+    if not base.startswith("https://"):
+        raise HTTPException(
+            status_code=400,
+            detail="Telegram webhook uchun PUBLIC_URL HTTPS bo'lishi kerak (masalan: https://resca.uz)",
         )
 
     webhook_url = f"{base}/api/telegram/webhook/{venue_id}"

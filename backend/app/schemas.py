@@ -22,7 +22,7 @@ class LoginInput(BaseModel):
 class User(BaseModel):
     id: int
     username: str
-    role: Literal["owner", "admin", "kassir", "waiter", "oshpaz", "mangalchi", "dastavkachi"]
+    role: Literal["owner", "admin", "kassir", "waiter", "oshpaz", "dastavkachi"]
     name: Optional[str] = None
     phone: Optional[str] = None
     venueId: Optional[int] = None
@@ -31,15 +31,11 @@ class User(BaseModel):
 
 
 class UserInput(BaseModel):
-    username: str = Field(
-        min_length=3,
-        max_length=64,
-        pattern=r"^[A-Za-z0-9_.@-]+$",
-    )
+    username: str = Field(min_length=3, max_length=64, pattern=r"^[A-Za-z0-9_.@-]+$")
     password: str
     name: Optional[str] = None
     phone: Optional[str] = None
-    role: Literal["owner", "admin", "kassir", "waiter", "oshpaz", "mangalchi", "dastavkachi"]
+    role: Literal["owner", "admin", "kassir", "waiter", "oshpaz", "dastavkachi"]
     venueId: Optional[int] = None
 
 
@@ -48,7 +44,7 @@ class UserUpdate(BaseModel):
     password: Optional[str] = None
     name: Optional[str] = None
     phone: Optional[str] = None
-    role: Optional[Literal["owner", "admin", "kassir", "waiter", "oshpaz", "mangalchi", "dastavkachi"]] = None
+    role: Optional[Literal["owner", "admin", "kassir", "waiter", "oshpaz", "dastavkachi"]] = None
     venueId: Optional[int] = None
 
 
@@ -201,7 +197,8 @@ class Order(BaseModel):
     totalAmount: float
     paymentType: Literal["cash", "card", "transfer", "debt"]
     paymentSplit: Optional[PaymentSplit] = None
-    status: Literal["open", "completed", "debt", "cancelled"]
+    status: Literal["open", "preparing", "ready", "completed", "debt", "cancelled"]
+    source: str = "pos"
     notes: Optional[str] = None
     createdAt: datetime
 
@@ -214,6 +211,8 @@ class OrderDetail(Order):
 
 class OpenOrderItem(OrderItem):
     id: int
+    batchNumber: Optional[int] = None
+    itemStatus: str = "draft"
 
 
 class ActiveOrder(BaseModel):
@@ -227,8 +226,27 @@ class ActiveOrder(BaseModel):
     waiterName: Optional[str] = None
     totalAmount: float
     notes: Optional[str] = None
+    source: str = "pos"
+    status: str = "open"
+    waiterClosed: bool = False
     createdAt: datetime
     items: List[OpenOrderItem]
+
+
+class KitchenStatusUpdate(BaseModel):
+    status: str  # "preparing" or "ready"
+
+
+class SendBatchInput(BaseModel):
+    pass  # empty body, just triggers the send
+
+
+class UpdateBatchStatusInput(BaseModel):
+    status: str  # "preparing" or "ready"
+
+
+class StornoItemInput(BaseModel):
+    quantity: int
 
 
 class WaiterUser(BaseModel):
@@ -246,7 +264,15 @@ class CreateWaiterInput(BaseModel):
     password: str = Field(min_length=1, max_length=256)
     name: Optional[str] = None
     phone: Optional[str] = None
-    role: Optional[Literal["kassir", "waiter", "oshpaz", "mangalchi", "dastavkachi"]] = "waiter"
+    role: Optional[Literal["kassir", "waiter", "oshpaz", "dastavkachi"]] = "waiter"
+
+
+class UpdateWaiterInput(BaseModel):
+    username: Optional[str] = Field(default=None, min_length=3, max_length=64, pattern=r"^[A-Za-z0-9_.@-]+$")
+    password: Optional[str] = None
+    name: Optional[str] = None
+    phone: Optional[str] = None
+    role: Optional[Literal["kassir", "waiter", "oshpaz", "dastavkachi"]] = None
 
 
 class CreateOpenOrderItemInput(BaseModel):
@@ -267,6 +293,7 @@ class CreateOpenOrderInput(BaseModel):
 class UpdateOpenOrderInput(BaseModel):
     items: List[CreateOpenOrderItemInput]
     notes: Optional[str] = None
+    waiterClosed: Optional[bool] = None
 
 
 class PayOpenOrderInput(BaseModel):
@@ -275,12 +302,14 @@ class PayOpenOrderInput(BaseModel):
     customerId: Optional[int] = None
     notes: Optional[str] = None
     items: Optional[List[CreateOpenOrderItemInput]] = None
+    tableId: Optional[int] = None  # agar berilsa, shu stoldagi barcha yopiq buyurtmalarni birlashtirib to'lash
 
 
 class PayOpenOrderResult(BaseModel):
     id: int
     status: str
     totalAmount: float
+    orderCount: int = 1  # nechta buyurtma birlashtirilgani
 
 
 class RoomBase(BaseModel):
@@ -430,11 +459,14 @@ class PublicVenue(BaseModel):
     id: int
     name: str
     type: str
+    logoUrl: Optional[str] = None
     address: Optional[str] = None
     phone: Optional[str] = None
     instagram: Optional[str] = None
     telegram: Optional[str] = None
     facebook: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
 
 
 class PublicProduct(BaseModel):
@@ -675,3 +707,145 @@ class TelegramCustomer(BaseModel):
     chatId: str
     isRegistered: bool
     createdAt: datetime
+
+
+class TelegramLinkInput(BaseModel):
+    chatId: int
+
+
+# --- Tariff / Subscription / Payment ---
+
+class TariffPlan(BaseModel):
+    id: int
+    name: str
+    description: Optional[str] = None
+    monthlyPrice: float
+    yearlyPrice: float
+    maxProducts: Optional[int] = None
+    maxStaff: Optional[int] = None
+    featuresJson: Optional[str] = None
+    trialDays: Optional[int] = None
+    isActive: bool
+    createdAt: datetime
+
+
+class TariffPlanInput(BaseModel):
+    name: str
+    description: Optional[str] = None
+    monthlyPrice: float = 0
+    yearlyPrice: float = 0
+    maxProducts: Optional[int] = None
+    maxStaff: Optional[int] = None
+    featuresJson: Optional[str] = None
+    trialDays: Optional[int] = None
+    isActive: bool = True
+
+
+class VenueSubscriptionSchema(BaseModel):
+    id: int
+    venueId: int
+    tariffPlanId: int
+    startDate: datetime
+    endDate: datetime
+    status: str
+    billingCycle: str
+    autoRenew: bool
+    createdAt: datetime
+    updatedAt: datetime
+    tariffPlan: Optional[TariffPlan] = None
+    venueName: Optional[str] = None
+
+
+class VenueSubscriptionInput(BaseModel):
+    tariffPlanId: int
+    billingCycle: str = "monthly"
+    autoRenew: bool = True
+
+
+class PaymentSchema(BaseModel):
+    id: int
+    venueId: int
+    subscriptionId: Optional[int] = None
+    amount: float
+    currency: str
+    status: str
+    paymentMethod: Optional[str] = None
+    billingCycle: str
+    notes: Optional[str] = None
+    paidAt: Optional[datetime] = None
+    createdAt: datetime
+    venueName: Optional[str] = None
+
+
+class PaymentInput(BaseModel):
+    venueId: int
+    subscriptionId: Optional[int] = None
+    amount: float
+    currency: str = "UZS"
+    status: str = "paid"
+    paymentMethod: Optional[str] = None
+    billingCycle: str = "monthly"
+    notes: Optional[str] = None
+    paidAt: Optional[datetime] = None
+
+
+class OwnerDashboardStats(BaseModel):
+    totalVenues: int
+    totalMonthlyRevenue: float
+    totalYearlyRevenue: float
+    activeSubscriptions: int
+    expiredSubscriptions: int
+    recentPayments: list[PaymentSchema]
+    latestVenues: list["VenueStat"]
+    venueSubscriptions: list[VenueSubscriptionSchema]
+    totalRevenue: float = 0
+    paidCount: int = 0
+    pendingCount: int = 0
+    failedCount: int = 0
+    dailyBreakdown: list[RevenueByDay] = []
+    monthlyBreakdown: list[RevenueByMonth] = []
+    yearlyBreakdown: list[RevenueByMonth] = []
+    byVenue: list[RevenueByVenue] = []
+    byTariff: list[RevenueByTariff] = []
+
+
+class RevenueByMonth(BaseModel):
+    year: int
+    month: int
+    total: float
+    count: int
+
+
+class RevenueByVenue(BaseModel):
+    venueId: int
+    venueName: str
+    total: float
+    count: int
+
+
+class RevenueByTariff(BaseModel):
+    tariffPlanId: int
+    tariffName: str
+    total: float
+    count: int
+
+
+class RevenueByDay(BaseModel):
+    year: int
+    month: int
+    day: int
+    total: float
+    count: int
+
+
+class OwnerReport(BaseModel):
+    totalRevenue: float
+    totalPayments: int
+    paidCount: int
+    pendingCount: int
+    failedCount: int
+    dailyBreakdown: list[RevenueByDay]
+    monthlyBreakdown: list[RevenueByMonth]
+    yearlyBreakdown: list[RevenueByMonth]
+    byVenue: list[RevenueByVenue]
+    byTariff: list[RevenueByTariff]
